@@ -1,0 +1,28 @@
+# Environment Configuration for Credit Risk Project
+name: credit_risk # Name of the Conda environment
+
+# Channel priorities (top has highest priority)
+channels:
+  - conda-forge
+  - defaults
+
+dependencies:
+  # Python Runtime
+  - python=3.12 # Fixed python version for stability
+
+
+  # Data preparation parameters
+data_preparation:
+  data_reader:
+    file_path: "data/raw/credit_risk_data.csv" # Path to the raw data file
+  data_preprocessor:
+    columns_to_drop: ["Unnamed: 0"] # Columns to drop from the dataset
+    transformations:
+      - type: "String_to_Numeric_specif"
+        columns: ["emp_length"] # Columns to convert to numeric
+        new_column_names: ["emp_length_int"] # New column names after transformation
+      - type: "String_to_Datetime"
+        columns: ["earliest_cr_line"] # Columns to convert to datetime
+        new_column_names: ["earliest_cr_line_date"] # New column names after transformation
+    reference_date: "2017-12-01" # Reference date for datetime transformations
+    
