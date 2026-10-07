@@ -21,8 +21,13 @@ data_preparation:
       - type: "String_to_Numeric_specif"
         columns: ["emp_length"] # Columns to convert to numeric
         new_column_names: ["emp_length_int"] # New column names after transformation
+      - type: "String_to_Numeric_specif2"
+        columns: ["term"] # Columns to convert to numeric
+        new_column_names: ["term_int"] # New column names after transformation
       - type: "String_to_Datetime"
         columns: ["earliest_cr_line"] # Columns to convert to datetime
         new_column_names: ["earliest_cr_line_date"] # New column names after transformation
+      - type: "String_to_Datetime"
+        columns: ["issue_d"] # Columns to convert to datetime
+        new_column_names: ["issue_d_date"] # New column names after transformation
     reference_date: "2017-12-01" # Reference date for datetime transformations
-    
