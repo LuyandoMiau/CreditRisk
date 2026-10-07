@@ -63,33 +63,34 @@ class DataReader:
         Reads data from a CSV, Excel, or Pickle file and stores it in the data attribute.
         
         Supports file formats: .csv, .xlsx, .xls, .pkl
-        Handles unclosed string quotes and malformed CSV lines gracefully.
+        Handles unclosed quotes (EOF inside string) and line tokenization errors cleanly.
         """
-        # Convert file_path to a Path object to extract extension cleanly regardless of input type (str or Path)
         path = Path(self.file_path)
         ext = path.suffix.lower()
 
-        # Handle file reading based on extension
         if ext == '.csv':
             logger.info("Reading CSV file: %s", self.file_path)
-            # Use engine='python', quoting=csv.QUOTE_NONE, and on_bad_lines='skip' 
-            # to handle unclosed quotes (EOF inside string) and corrupt line tokens.
             try:
+                # 1. Primary Attempt: Use Python engine with line skipping to bypass malformed quotes/rows
                 self.data = pd.read_csv(
                     self.file_path,
-                    on_bad_lines='skip',
                     engine='python',
-                    escapechar='\\'
+                    on_bad_lines='skip',
+                    encoding='utf-8-sig'
                 )
-            except pd.errors.ParserError:
-                # Fallback: Ignore quote delimiters completely if unclosed quotes persist
-                logger.warning("Standard CSV parse failed due to unclosed quotes. Retrying with quote-free parsing.")
+            except (pd.errors.ParserError, Exception) as e:
+                logger.warning("Primary CSV read failed (%s). Retrying without quote tokenization.", e)
+                # 2. Fallback Attempt: Disable quote boundary parsing completely so unclosed quotes won't reach EOF
                 self.data = pd.read_csv(
                     self.file_path,
-                    on_bad_lines='skip',
                     engine='python',
-                    quoting=csv.QUOTE_NONE
+                    quoting=csv.QUOTE_NONE,
+                    on_bad_lines='skip',
+                    encoding='utf-8-sig'
                 )
+
+            # Post-processing clean-up for trailing delimiter artifacts (e.g., inq_last_12m;;;;)
+            self.data.columns = self.data.columns.str.rstrip(';')
 
         elif ext in ('.xlsx', '.xls'):
             logger.info("Reading Excel file: %s", self.file_path)
