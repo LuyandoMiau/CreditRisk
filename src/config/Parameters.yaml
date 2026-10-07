@@ -1,0 +1,38 @@
+# Environment Configuration for Credit Risk Project
+name: credit_risk # Name of the Conda environment
+
+# Channel priorities (top has highest priority)
+channels:
+  - conda-forge
+  - defaults
+
+dependencies:
+  # Python Runtime
+  - python=3.12 # Fixed python version for stability
+
+# Data exploration
+data_exploration:
+  data_explorer_advanced_sqlite:
+    db_path: "/Users/bonjour/Documents/Credit_Risk/Credit Risk - Python/src/SQLite_database/loan_data_2007_2014.db" # Path to the SQLite database file
+    table_name: "loan_data" # Name of the table in the SQLite database
+
+# Data preparation parameters
+data_preparation:
+  data_reader:
+    file_path: "/Users/bonjour/Documents/Credit_Risk/Credit Risk - Python/Data/loan_data_2007_2014.csv" # Path relative to the main file
+  data_preprocessor:
+    columns_to_drop: ["Unnamed: 0"] # Columns to drop from the dataset
+    transformations:
+      - type: "String_to_Numeric_specif"
+        columns: ["emp_length"] # Columns to convert to numeric
+        new_column_names: ["emp_length_int"] # New column names after transformation
+      - type: "String_to_Numeric_specif2"
+        columns: ["term"] # Columns to convert to numeric
+        new_column_names: ["term_int"] # New column names after transformation
+      - type: "String_to_Datetime"
+        columns: ["earliest_cr_line"] # Columns to convert to datetime
+        new_column_names: ["earliest_cr_line_date"] # New column names after transformation
+      - type: "String_to_Datetime"
+        columns: ["issue_d"] # Columns to convert to datetime
+        new_column_names: ["issue_d_date"] # New column names after transformation
+    reference_date: "2017-12-01" # Reference date for datetime transformations

@@ -12,3 +12,7 @@ If you have the MarkDown extension, please use Ctrl+Shft+v (or alternative for M
 * **Feature 1:** Direct description of core capability.
 * **Feature 2:** Direct description of core capability.
 * **Feature 3:** Direct description of core capability.
+
+
+
+NOTE: Read of CSV not working well needs to be fixed

@@ -51,31 +51,57 @@ class DataReader:
     def __init__(self, file_path: str):
         
         """ 
-        The init just requires the file path of the dataset to be read. It can be a CSV or EXCEL file. 
+        The init just requires the file path of the dataset to be read. It can be a CSV, EXCEL or PKL file. 
         """
         self.file_path = file_path
         self.data = None
 
-    # READS the data from a CSV or EXCEL file and stores it in the data attribute.
+    # READS the data from a CSV, EXCEL or PKL file and stores it in the data attribute.
     @log_execution
     def read_data(self):
+        """
+        Reads data from a CSV, Excel, or Pickle file and stores it in the data attribute.
         
+        Supports file formats: .csv, .xlsx, .xls, .pkl
+        Handles unclosed string quotes and malformed CSV lines gracefully.
         """
-        Reads data from a CSV or EXCEL file and stores it in the data attribute.
-        """
+        # Convert file_path to a Path object to extract extension cleanly regardless of input type (str or Path)
+        path = Path(self.file_path)
+        ext = path.suffix.lower()
 
-        # Handle clases for the different file formats
-        if self.file_path.endswith('.csv'):
+        # Handle file reading based on extension
+        if ext == '.csv':
             logger.info("Reading CSV file: %s", self.file_path)
-            self.data = pd.read_csv(self.file_path)
-        elif self.file_path.endswith('.xlsx') or self.file_path.endswith('.xls'):
+            # Use engine='python', quoting=csv.QUOTE_NONE, and on_bad_lines='skip' 
+            # to handle unclosed quotes (EOF inside string) and corrupt line tokens.
+            try:
+                self.data = pd.read_csv(
+                    self.file_path,
+                    on_bad_lines='skip',
+                    engine='python',
+                    escapechar='\\'
+                )
+            except pd.errors.ParserError:
+                # Fallback: Ignore quote delimiters completely if unclosed quotes persist
+                logger.warning("Standard CSV parse failed due to unclosed quotes. Retrying with quote-free parsing.")
+                self.data = pd.read_csv(
+                    self.file_path,
+                    on_bad_lines='skip',
+                    engine='python',
+                    quoting=csv.QUOTE_NONE
+                )
+
+        elif ext in ('.xlsx', '.xls'):
             logger.info("Reading Excel file: %s", self.file_path)
             self.data = pd.read_excel(self.file_path)
-        elif self.file_path.endswith('.pkl'):
+
+        elif ext == '.pkl':
             logger.info("Reading pickle file: %s", self.file_path)
             self.data = pd.read_pickle(self.file_path)
+
         else:
-            raise ValueError("Unsupported file format. Please provide a CSV or EXCEL file.")
+            raise ValueError(f"Unsupported file format '{ext}'. Supported formats: .csv, .xlsx, .xls, .pkl")
+        
         logger.info("Loaded dataset with %d rows and %d columns", *self.data.shape)
     
     # CREATES a copy of the data to avoid modifying the original dataset.   
@@ -114,27 +140,28 @@ class DataExplorerAdvanced:
     
     # EXPLORE the dataset using sqlite extension and return some basic information about it.
     @log_execution
-    def explore_data_sqlite(self):
+    def save_to_sqlite(self, db_path: str, table_name: str):
+        """
+        Saves the pandas DataFrame into a physical SQLite database file (.db) on disk.
+        Creates the target directory automatically if it does not exist.
+        """
+        target_path = Path(db_path)
         
-        """
-        Explores the dataset using sqlite extension and returns some basic information about it.
-        """
+        # Ensure the destination directory exists before opening the SQLite connection
+        target_path.parent.mkdir(parents=True, exist_ok=True)
 
-        # Create the connection to the in-memory SQLite database and store the data in a table called 'data'
-        conn = sqlite3.connect(':memory:')
-        # Store the data in a table called 'data'
-        logger.info("Writing %d rows to the in-memory SQLite table", len(self.data))
-        self.data.to_sql('data', conn, index=False)
-        # Make a query to select the first 5 rows of the data table and print the result
-        query = "SELECT * FROM data LIMIT 5"
-        # Execute the query and store the result in a pandas DataFrame
-        result = pd.read_sql_query(query, conn)
-        logger.info("SQLite preview query returned %d rows", len(result))
-        # Display the result, but not printing, but using the display function from IPython.display to show the DataFrame in a more readable format
-        from IPython.display import display
-        display(result)
-        # Close the connection to the SQLite database
-        conn.close()
+        # Connect directly to the disk file path instead of in-memory RAM
+        logger.info("Connecting to SQLite database file at: %s", target_path)
+        conn = sqlite3.connect(target_path)
+
+        try:
+            # Write DataFrame to the database file
+            logger.info("Writing %d rows to SQLite table '%s'", len(self.data), table_name)
+            self.data.to_sql(table_name, conn, if_exists='replace', index=False)
+            logger.info("Successfully saved database file to %s", target_path.resolve())
+        finally:
+            # Ensure connection is closed cleanly even if an exception occurs
+            conn.close()
 
 """
 This class is responsible for preprocessing the data. 
