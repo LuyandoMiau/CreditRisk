@@ -20,16 +20,17 @@ data_exploration:
 data_preparation:
   data_reader:
     file_path: "/Users/bonjour/Documents/Credit_Risk/Credit Risk - Python/Data/loan_data_2007_2014.csv" # Path relative to the main file
-  data_preprocessor:
     columns_to_drop: ["Unnamed: 0"] # Columns to drop from the dataset
+  data_preprocessor:
+    columns_to_drop: [] # Columns to drop extra from the dataset in case we need to drop more columns, we can add them here
     transformations:
-      - type: "String_to_Numeric_specif"
+      - type: "String_to_Numeric_specif" # For emp_length_int
         columns: ["emp_length"] # Columns to convert to numeric
         new_column_names: ["emp_length_int"] # New column names after transformation
       - type: "String_to_Numeric_specif2"
         columns: ["term"] # Columns to convert to numeric
         new_column_names: ["term_int"] # New column names after transformation
-      - type: "String_to_Datetime"
+      - type: "String_to_Datetime" # earliest_cr_line_date
         columns: ["earliest_cr_line"] # Columns to convert to datetime
         new_column_names: ["earliest_cr_line_date"] # New column names after transformation
       - type: "String_to_Datetime"

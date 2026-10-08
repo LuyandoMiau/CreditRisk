@@ -7,7 +7,7 @@ This one should directly handle data from an already existing dataset, a CSV, PI
 import logging
 from functools import wraps
 from time import perf_counter
-from typing import Callable, ParamSpec, TypeVar
+from typing import Callable, ParamSpec, TypeVar, Union
 import csv
 import re
 import pandas as pd
@@ -258,8 +258,29 @@ class DataPreprocessor:
         columns_to_clear (list): List of column names to be cleared.
         """
         logger.info("Dropping columns: %s", columns_to_clear)
-        self.data.drop(columns=columns_to_clear, inplace=True)
+        if columns_to_clear != []:
+            self.data.drop(columns=columns_to_clear, inplace=True)
         logger.info("Dataset now has %d columns", len(self.data.columns))
+    
+    # This function is responsible for parsing a reference date string into a pandas Timestamp object. It can handle both string and pandas Timestamp inputs.
+    @staticmethod
+    def parse_reference_date(date_input: Union[str, pd.Timestamp]) -> pd.Timestamp:
+        """
+        Converts a reference date string (e.g. '2017-12-01') into a pandas Timestamp.
+        
+        Parameters:
+            date_input (str | pd.Timestamp): Date to parse.
+            
+        Returns:
+            pd.Timestamp: Standardized pandas Timestamp object.
+        """
+        if isinstance(date_input, pd.Timestamp):
+            return date_input
+        
+        try:
+            return pd.to_datetime(date_input)
+        except Exception as e:
+            raise ValueError(f"Could not parse reference date '{date_input}': {e}")
 
     # Handle some column types transformations for columns
     # But this is a particular case of our dataset, so thez are optional so variables/columns can be different for other cases
@@ -328,77 +349,72 @@ class DataPreprocessor:
              defined_reference_date = pd.to_datetime(define_reference_date)
              return defined_reference_date
          
-        # Specific function to get the days and months since the earliest credit line, based on the defined reference date
-        @log_execution
-        def get_days_months_since_earliest_credit_line(self, defined_reference_date: str):
-            
-            # Retrieve the defined reference date from the user input and convert it to a datetime object
-            defined_reference_date = self.get_defined_reference_date(defined_reference_date)
-            
-            # Check that the column 'earliest_cr_line_date' exists in the DataFrame
-            if 'earliest_cr_line_date' not in self.data.columns:
-                raise ValueError("Column 'earliest_cr_line_date' does not exist in the DataFrame. Check in parameters in the part of data_preparation/data_preprocessor/transformations/new_column_names")
-            
-            # Get the days and months since the earliest credit line, based on the defined reference date
-            self.data['days_since_earliest_credit_line'] = defined_reference_date - self.data['earliest_cr_line_date']
-            self.data['months_since_earliest_credit_line'] = (self.data['days_since_earliest_credit_line'].dt.days / 30.44).round()
-            
-            # Also get some descriptive statistics for the new columns
-            logger.info(
-                "Days since earliest credit line:\n%s",
-                self.data['days_since_earliest_credit_line'].describe().to_string(),
-            )
-            logger.info(
-                "Months since earliest credit line:\n%s",
-                self.data['months_since_earliest_credit_line'].describe().to_string(),
-            )
-            
-        # Here a function to handle negative values for months_since_earliest_credit_line, in case the reference date is in the future, the negative values will be set to the maximum value of the column, and the user will get notified about it
-        @log_execution
-        def handle_negative_values(self):
-            if 'months_since_earliest_credit_line' in self.data.columns:
-                negative_values_count = (self.data['months_since_earliest_credit_line'] < 0).sum()
-                min_value = self.data['months_since_earliest_credit_line'].min()
-                logger.info(
-                    "Minimum months since earliest credit line: %s",
-                    min_value,
-                )
-                if negative_values_count > 0:
-                    max_value = self.data['months_since_earliest_credit_line'].max()
-                    self.data.loc[self.data['months_since_earliest_credit_line'] < 0, 'months_since_earliest_credit_line'] = max_value
-                    logger.warning(
-                        "Replaced %d negative months-since-earliest-credit-line values with the column maximum (%s)",
-                        negative_values_count,
-                        max_value,
-                    )
-                else:
-                    logger.info("No negative months-since-earliest-credit-line values found")
-            else:
-                logger.info("Skipping negative-value handling; target column is absent")
+    # Specific function to get the days and months since the earliest credit line, based on the defined reference date
+    @log_execution
+    def get_days_months_since_earliest_credit_line(self, defined_reference_date: str):
         
-        # Get days and months since issue_date, based on the defined reference date
-        @log_execution
-        def get_days_months_since_issue_date(self, defined_reference_date: str):
-            # Retrieve the defined reference date from the user input and convert it to a datetime object
-            defined_reference_date = self.get_defined_reference_date(defined_reference_date)
-            
-            # Check that the column 'issue_d_date' exists in the DataFrame
-            if 'issue_d_date' not in self.data.columns:
-                raise ValueError("Column 'issue_d_date' does not exist in the DataFrame. Check in parameters in the part of data_preparation/data_preprocessor/transformations/new_column_names")
-            
-            # Get the days and months since the issue date, based on the defined reference date
-            self.data['days_since_issue_date'] = defined_reference_date - self.data['issue_d_date']
-            self.data['months_since_issue_date'] = (self.data['days_since_issue_date'].dt.days / 30.44).round()
-            
-            # Also get some descriptive statistics for the new columns
+        # Check that the column 'earliest_cr_line_date' exists in the DataFrame
+        if 'earliest_cr_line_date' not in self.data.columns:
+            raise ValueError("Column 'earliest_cr_line_date' does not exist in the DataFrame. Check in parameters in the part of data_preparation/data_preprocessor/transformations/new_column_names")
+        
+        # Get the days and months since the earliest credit line, based on the defined reference date
+        self.data['days_since_earliest_credit_line'] = defined_reference_date - self.data['earliest_cr_line_date']
+        self.data['months_since_earliest_credit_line'] = (self.data['days_since_earliest_credit_line'].dt.days / 30.44).round()
+        
+        # Also get some descriptive statistics for the new columns
+        logger.info(
+            "Days since earliest credit line:\n%s",
+            self.data['days_since_earliest_credit_line'].describe().to_string(),
+        )
+        logger.info(
+            "Months since earliest credit line:\n%s",
+            self.data['months_since_earliest_credit_line'].describe().to_string(),
+        )
+        
+    # Here a function to handle negative values for months_since_earliest_credit_line, in case the reference date is in the future, the negative values will be set to the maximum value of the column, and the user will get notified about it
+    @log_execution
+    def handle_negative_values_months_since_earliest_credit_line(self):
+        if 'months_since_earliest_credit_line' in self.data.columns:
+            negative_values_count = (self.data['months_since_earliest_credit_line'] < 0).sum()
+            min_value = self.data['months_since_earliest_credit_line'].min()
             logger.info(
-                "Days since issue date:\n%s",
-                self.data['days_since_issue_date'].describe().to_string(),
+                "Minimum months since earliest credit line: %s",
+                min_value,
             )
-            logger.info(
-                "Months since issue date:\n%s",
-                self.data['months_since_issue_date'].describe().to_string(),
-            )
+            if negative_values_count > 0:
+                max_value = self.data['months_since_earliest_credit_line'].max()
+                self.data.loc[self.data['months_since_earliest_credit_line'] < 0, 'months_since_earliest_credit_line'] = max_value
+                logger.warning(
+                    "Replaced %d negative months-since-earliest-credit-line values with the column maximum (%s)",
+                    negative_values_count,
+                    max_value,
+                )
+            else:
+                logger.info("No negative months-since-earliest-credit-line values found")
+        else:
+            logger.info("Skipping negative-value handling; target column is absent")
+    
+    # Get days and months since issue_date, based on the defined reference date
+    @log_execution
+    def get_days_months_since_issue_date(self, defined_reference_date: str):
+        
+        # Check that the column 'issue_d_date' exists in the DataFrame
+        if 'issue_d_date' not in self.data.columns:
+            raise ValueError("Column 'issue_d_date' does not exist in the DataFrame. Check in parameters in the part of data_preparation/data_preprocessor/transformations/new_column_names")
+        
+        # Get the days and months since the issue date, based on the defined reference date
+        self.data['days_since_issue_date'] = defined_reference_date - self.data['issue_d_date']
+        self.data['months_since_issue_date'] = (self.data['days_since_issue_date'].dt.days / 30.44).round()
+        
+        # Also get some descriptive statistics for the new columns
+        logger.info(
+            "Days since issue date:\n%s",
+            self.data['days_since_issue_date'].describe().to_string(),
+        )
+        logger.info(
+            "Months since issue date:\n%s",
+            self.data['months_since_issue_date'].describe().to_string(),
+        )
         
         
 
