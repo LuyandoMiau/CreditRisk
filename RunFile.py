@@ -116,7 +116,19 @@ def main():
     data_preprocessor.get_days_months_since_issue_date(defined_reference_date=defined_reference_date)
     logger.info(f"Days and months since the issue date calculated using reference date: {defined_reference_date}.")
     
+    # 3. Create the dummy variables for the categorical columns
+    categorical_variables = params["data_preparation"]["data_preprocessor"]["categorical_columns"]
+    data_preprocessor.create_dummy_variables(categorical_columns=categorical_variables)
+    logger.info("Dummy variables created for categorical columns.")
+    
+    # 4. Handle NAs
+    empty_values_handler = params["data_preparation"]["data_preprocessor"]["handle_empty_values"]
+    columns_to_handle = empty_values_handler["columns"]
+    case = empty_values_handler["case"]
+    data_preprocessor.handle_empty_values(columns=columns_to_handle, case=case)
+    logger.info(f"NAs handled for the columns {columns_to_handle} using the case {case}.")
+    
 
 
-if __name__ == "__main__":
+if __name__ == "__main__": 
     main()

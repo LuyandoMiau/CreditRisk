@@ -286,68 +286,93 @@ class DataPreprocessor:
     # But this is a particular case of our dataset, so thez are optional so variables/columns can be different for other cases
     @log_execution
     def transform_columns_types(self, transformation_type: str, columns: List[str], new_column_names: List[str]):
-        
         """
-        The function transforms a set of columns depending on the transformation type
+        Transforms a set of columns according to the specified transformation type.
         
-        transformation types:
-        - String_to_Numeric_specif: FOR OUR SPECIFIC DATASET, for columns with string values that can be converted to numeric values, but with specific cases to handle
-        - String_to_Numeric_specif2: FOR OUR SPECIFIC DATASET, for columns with string values that can be converted to numeric values, but with specific cases to handle
-        - String_to_Numeric: for columns with string values that can be converted to numeric values
-        - String_to_Datetime: for columns with string values that can be converted to datetime values
-        - Categorical_to_Numeric: for columns with categorical values that can be converted to numeric values
+        Supported transformation types:
+        - String_to_Numeric_specif: Converts specific string representations (e.g. '< 1 year', 'n/a') to integers.
+        - String_to_Numeric_specif2: Strips text indicators (e.g. ' months') and converts to integers.
+        - String_to_Numeric: Standard conversion of string columns to numeric via pd.to_numeric.
+        - String_to_Datetime: Converts date strings into pandas datetime objects using format '%b-%y'.
+        - Categorical_to_Numeric: Encodes categorical variables into numerical codes using pandas category codes.
+        
+        Parameters:
+            transformation_type (str): Key identifying which transformation logic to apply.
+            columns (List[str]): Original source column names in self.data.
+            new_column_names (List[str]): Target column names for transformed outputs.
         """
-        
         logger.info(
-            "Applying transformation '%s' to columns: %s",
+            "Applying transformation '%s' to columns: %s -> %s",
             transformation_type,
             columns,
+            new_column_names
         )
-        # Here first case =====> Column: emp_length
+
+        # -------------------------------------------------------------------------
+        # Case 1: String_to_Numeric_specif (e.g., 'emp_length' -> 'emp_length_int')
+        # Extracts numeric values from strings like '< 1 year' or '10+ years', filling n/a with 0
+        # -------------------------------------------------------------------------
         if transformation_type == "String_to_Numeric_specif":
-            for column in columns:
-                self.data[column] = (
+            for i, column in enumerate(columns):
+                target_col = new_column_names[i]
+                self.data[target_col] = (
                     self.data[column]
-                        .replace({"< 1 year": "0", "n/a": "0"}) # Replace all of these 
+                        .astype(str)
+                        .replace({"< 1 year": "0", "n/a": "0"})
                         .str.extract(r"(\d+)", expand=False)
-                        .fillna(0) # fill nas with zeros
+                        .fillna(0)
                         .astype(int)
                 )
+                logger.info("Transformed '%s' into new column '%s'", column, target_col)
         
-        # Here second case =====> Column: term: get rid off the word months
+        # -------------------------------------------------------------------------
+        # Case 2: String_to_Numeric_specif2 (e.g., 'term' -> 'term_int')
+        # Strips ' months' string noise and converts values to integers
+        # -------------------------------------------------------------------------
         elif transformation_type == "String_to_Numeric_specif2":
-                    for column in columns:
-                        self.data[column] = (
-                            self.data[column]
-                                .str.replace(" months", "", regex=False) # Replace " months" with ""
-                                .fillna(0) # fill nas with zeros
-                                .astype(int)
-                        )
-                        logger.info("Converted column '%s' from month strings to integers", column)
+            for i, column in enumerate(columns):
+                target_col = new_column_names[i]
+                self.data[target_col] = (
+                    self.data[column]
+                        .astype(str)
+                        .str.replace(" months", "", regex=False)
+                        .fillna(0)
+                        .astype(int)
+                )
+                logger.info("Transformed '%s' into new column '%s'", column, target_col)
 
-        # Here second case
+        # -------------------------------------------------------------------------
+        # Case 3: String_to_Numeric
+        # Standard numeric coercion using pd.to_numeric
+        # -------------------------------------------------------------------------
         elif transformation_type == "String_to_Numeric":
             for i, column in enumerate(columns):
-                self.data[new_column_names[i]] = pd.to_numeric(self.data[column], errors='coerce')
-                logger.info("Converted '%s' to numeric column '%s'", column, new_column_names[i])
+                target_col = new_column_names[i]
+                self.data[target_col] = pd.to_numeric(self.data[column], errors='coerce')
+                logger.info("Converted '%s' to numeric column '%s'", column, target_col)
 
-        # Here the thirs case =====> Column: earliest_cr_line
+        # -------------------------------------------------------------------------
+        # Case 4: String_to_Datetime (e.g., 'earliest_cr_line' -> 'earliest_cr_line_date')
+        # Converts date string into datetime object
+        # -------------------------------------------------------------------------
         elif transformation_type == "String_to_Datetime":
             for i, column in enumerate(columns):
-                self.data[new_column_names[i]] = pd.to_datetime(self.data[column], format='%b-%y', errors='coerce')
-                logger.info("Converted '%s' to datetime column '%s'", column, new_column_names[i])
+                target_col = new_column_names[i]
+                self.data[target_col] = pd.to_datetime(self.data[column], format='%b-%y', errors='coerce')
+                logger.info("Converted '%s' to datetime column '%s'", column, target_col)
 
-        # Here the fourth case
+        # -------------------------------------------------------------------------
+        # Case 5: Categorical_to_Numeric
+        # Encodes categorical variables to numeric category codes
+        # -------------------------------------------------------------------------
         elif transformation_type == "Categorical_to_Numeric":
             for i, column in enumerate(columns):
-                self.data[new_column_names[i]] = self.data[column].astype('category').cat.codes
-                logger.info("Encoded '%s' as numeric column '%s'", column, new_column_names[i])
-        
-        # We get the defined reference date from the user input, and convert it to a datetime object
-        @staticmethod
-        def get_defined_reference_date(define_reference_date: str):
-             defined_reference_date = pd.to_datetime(define_reference_date)
-             return defined_reference_date
+                target_col = new_column_names[i]
+                self.data[target_col] = self.data[column].astype('category').cat.codes
+                logger.info("Encoded '%s' as numeric column '%s'", column, target_col)
+
+        else:
+            raise ValueError(f"Unsupported transformation type: '{transformation_type}'")
          
     # Specific function to get the days and months since the earliest credit line, based on the defined reference date
     @log_execution
@@ -415,9 +440,106 @@ class DataPreprocessor:
             "Months since issue date:\n%s",
             self.data['months_since_issue_date'].describe().to_string(),
         )
+    
+    # Function to create the dummy variables for the categorical columns, and drop the original columns, and also drop the first dummy variable to avoid multicollinearity
+    @log_execution
+    def create_dummy_variables(self, categorical_columns: List[str]):
+        """
+        Creates dummy variables for the specified categorical columns 
+        and keeps all other columns in the dataset.
+        """
+        logger.info("Creating dummy variables for columns: %s", categorical_columns)
         
+        # Pass the full dataset (self.data) and specify columns=categorical_columns
+        self.data = pd.get_dummies(
+            self.data, 
+            columns=categorical_columns, 
+            prefix=categorical_columns, 
+            prefix_sep=":", 
+            dtype=int
+        )
+        logger.info("Dummy variables created. Dataset now has %d columns", len(self.data.columns))
+        
+    # Handle empty values in the dataset
+    @log_execution
+    def handle_empty_values(self, columns: List[str], case: str):
+        
+        """
+        First give a summary of the empty values in the dataset, then handle them accordingly.
+        """
+        
+        # Get the summary of the null values
+        def get_null_summary(columns_needed: List[str]) -> pd.DataFrame:
+            return pd.DataFrame({
+                "null_count": self.data[columns_needed].isna().sum(), # number of empty rows
+                "null_pct": (self.data[columns_needed].isna().mean() * 100).round(2), # percentage of the total
+                "var_type": self.data[columns_needed].dtypes.astype(str),
+                "mean": self.data[columns_needed].mean()
+            }).sort_values("null_count", ascending=False)
+        
+        # Render the summary as plain text so it is readable in a terminal.
+        null_summary = get_null_summary(columns_needed=columns)
+        print("\nNull-value summary:")
+        print(null_summary.to_string())
+        
+        # TIME TO HANDLE THE EMPTY VALUES
+        
+        # Case specific: loan_data_2007_2014
+        
+        if case == "default_loan_data_2007_2014":
+        
+            # Specific case for the column total_rev_hi_lim
+            # ========== total_rev_hi_lim ================
+            # if there is no data for the revolving limit, we assume it is equal to the fundded amount
+            self.data["total_rev_hi_lim"] = (
+                self.data["total_rev_hi_lim"]
+                .fillna(self.data["funded_amnt"])
+            )
+            
+            # Specific case for the column annual_inc
+            # ========== annual_inc ================
+            # Use the mean to fill missing values
+            self.data["annual_inc"] = self.data["annual_inc"].fillna(
+                self.data["annual_inc"].mean()
+            )
+            
+            # All the other are filled with zeros
+            for column in columns:
+                if column not in ["total_rev_hi_lim", "annual_inc"]:
+                    self.data[column] = self.data[column].fillna(0)
+        
+        # ====== Other cases ======== 
+        
+        elif case == "fill_with_zeros": 
+            
+            # Can be filled with zeros 
+            for column in columns:
+                self.data[column] = self.data[column].fillna(0)
+
+        elif case == "fill_with_mean":
+        
+            # Can be filled out with the mean of the column
+            for column in columns:
+                self.data[column] = self.data[column].fillna(self.data[column].mean())
+                
+        elif case == "fill_with_min":
+                
+                    # Can be filled out with the mean of the column
+                    for column in columns:
+                        self.data[column] = self.data[column].fillna(self.data[column].min())
+        
+        elif case == "fill_with_max":
+                
+                    # Can be filled out with the mean of the column
+                    for column in columns:
+                        self.data[column] = self.data[column].fillna(self.data[column].max())
         
 
+
+        
+        
+        
+        
 
         
 
