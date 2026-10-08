@@ -33,11 +33,14 @@ def main():
     
     # 1. Read the file path and parameters from the loaded configuration
     raw_data_path = params["data_preparation"]["data_reader"]["file_path"]
-    
-    # 2. Use the function to read the data and create a copy of the DataFrame
+    # 2. Use the function to read the data
     data_reader = DataReader(file_path=raw_data_path)
     data_reader.read_data()
-    logger.info(f"Data read from {raw_data_path} and copied successfully.")
+    logger.info(f"Data read from {raw_data_path} with shape: {data_reader.data.shape}")
+    # 3. Clear an unnecessary column (e.g., "Unnamed: 0") if it exists
+    data_reader.clear_columns(columns_to_clear=["Unnamed: 0"])
+    logger.info(f"Column 'Unnamed: 0' cleared from the dataset.")
+    # 4. Create a copy of the initial DataFrame for further processing
     df_initial = data_reader.copy_data()
     logger.info(f"Initial DataFrame created with shape: {df_initial.shape}")
 

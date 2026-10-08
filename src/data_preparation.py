@@ -8,7 +8,8 @@ import logging
 from functools import wraps
 from time import perf_counter
 from typing import Callable, ParamSpec, TypeVar
-
+import csv
+import re
 import pandas as pd
 import numpy as np
 import sklearn
@@ -55,42 +56,86 @@ class DataReader:
         """
         self.file_path = file_path
         self.data = None
+    
+    # Called by pandas ONLY for lines with more fields than the header (unquoted/broken commas in text columns)
+    def _merge_extra_fields(self, fields):
+        cols = self._header_fields
+        i_emp, i_desc, i_zip = cols.index('emp_title'), cols.index('desc'), cols.index('zip_code')
+        n_left, n_right, n_fixed = i_emp, len(cols) - i_zip, i_desc - i_emp - 1
+        left, right, mid = fields[:n_left], fields[-n_right:], fields[n_left:-n_right]
 
+        emp_len = re.compile(r'^(< 1 year|\d+\+? years?|n/a)$')
+        homes = {'RENT', 'OWN', 'MORTGAGE', 'OTHER', 'NONE', 'ANY'}
+        purposes = {'car', 'credit_card', 'debt_consolidation', 'educational', 'home_improvement', 'house',
+                    'major_purchase', 'medical', 'moving', 'other', 'renewable_energy', 'small_business',
+                    'vacation', 'wedding'}
+
+        # emp_title ends where emp_length (followed by a valid home_ownership) begins
+        k = next((j for j in range(len(mid) - 1) if emp_len.match(mid[j]) and mid[j + 1] in homes), None)
+        if k is None:
+            return self._reject(fields)
+        rest = mid[k + n_fixed:]  # desc ... purpose ... title
+        p = next((j for j, t in enumerate(rest) if t in purposes), None)
+        if p is None:
+            return self._reject(fields)
+        fixed = left + [','.join(mid[:k])] + mid[k:k + n_fixed] + [','.join(rest[:p]), rest[p], ','.join(rest[p + 1:])] + right
+        return fixed if len(fixed) == len(cols) else self._reject(fields)
+
+    # Keeps a record of lines that could not be realigned instead of dropping them
+    def _reject(self, fields):
+        self.rejected_lines.append(fields[:12])
+        return None
+    
     # READS the data from a CSV, EXCEL or PKL file and stores it in the data attribute.
     @log_execution
     def read_data(self):
         """
         Reads data from a CSV, Excel, or Pickle file and stores it in the data attribute.
         
-        Supports file formats: .csv, .xlsx, .xls, .pkl
-        Handles unclosed quotes (EOF inside string) and line tokenization errors cleanly.
+        Uses the Python engine directly to prevent C-parser tokenize errors on malformed lines.
         """
         path = Path(self.file_path)
         ext = path.suffix.lower()
 
         if ext == '.csv':
-            logger.info("Reading CSV file: %s", self.file_path)
-            try:
-                # 1. Primary Attempt: Use Python engine with line skipping to bypass malformed quotes/rows
-                self.data = pd.read_csv(
-                    self.file_path,
-                    engine='python',
-                    on_bad_lines='skip',
-                    encoding='utf-8-sig'
-                )
-            except (pd.errors.ParserError, Exception) as e:
-                logger.warning("Primary CSV read failed (%s). Retrying without quote tokenization.", e)
-                # 2. Fallback Attempt: Disable quote boundary parsing completely so unclosed quotes won't reach EOF
-                self.data = pd.read_csv(
-                    self.file_path,
-                    engine='python',
-                    quoting=csv.QUOTE_NONE,
-                    on_bad_lines='skip',
-                    encoding='utf-8-sig'
-                )
+            logger.info("Reading CSV file via Python parsing engine: %s", self.file_path)
 
-            # Post-processing clean-up for trailing delimiter artifacts (e.g., inq_last_12m;;;;)
-            self.data.columns = self.data.columns.str.rstrip(';')
+            # NEW: Header is read first so the bad-line handler knows the expected column layout
+            with open(self.file_path, encoding='utf-8-sig') as f:
+                self._header_fields = f.readline().rstrip('\r\n').rstrip(';').split(',')
+            self.rejected_lines = []
+
+            # Direct python engine read to avoid c_parser_wrapper entirely
+            # QUOTE_NONE stops a broken quote from swallowing following rows, and
+            # on_bad_lines now repairs rows with extra commas instead of silently skipping them
+            self.data = pd.read_csv(
+                self.file_path,
+                engine='python',
+                quoting=csv.QUOTE_NONE,
+                on_bad_lines=self._merge_extra_fields,
+                encoding='utf-8-sig'
+            )
+
+            # --- HEADER & ARTIFACT CLEANUP ---
+            # 1. Strip semicolon noise from column names
+            self.data.columns = self.data.columns.astype(str).str.rstrip(';').str.strip()
+
+            # 1b. Strip semicolon noise from the VALUES of the last column, and unwrap quoted text columns
+            last = self.data.columns[-1]
+            self.data[last] = pd.to_numeric(self.data[last].astype(str).str.replace(';', '', regex=False), errors='coerce')
+            for c in ['emp_title', 'desc', 'title']:
+                self.data[c] = self.data[c].str.replace(r'^"(.*)"$', r'\1', regex=True).str.replace('""', '"', regex=False)
+            if self.rejected_lines:
+                logger.warning("%d lines could not be re-aligned: %s", len(self.rejected_lines), self.rejected_lines)
+
+            # 2. Remove columns that are entirely empty
+            self.data.dropna(how='all', axis=1, inplace=True)
+
+            # 3. Remove artifact index columns ('Unnamed: 0')
+            unnamed_cols = [c for c in self.data.columns if c.startswith("Unnamed") or c == ""]
+            if unnamed_cols:
+                self.data.drop(columns=unnamed_cols, inplace=True)
+                logger.info("Dropped artifact columns: %s", unnamed_cols)
 
         elif ext in ('.xlsx', '.xls'):
             logger.info("Reading Excel file: %s", self.file_path)
@@ -104,6 +149,21 @@ class DataReader:
             raise ValueError(f"Unsupported file format '{ext}'. Supported formats: .csv, .xlsx, .xls, .pkl")
         
         logger.info("Loaded dataset with %d rows and %d columns", *self.data.shape)
+    
+    # CLEAR the specified columns from the dataset =====> ["Unnamed: 0"]
+    # this is not required for the preprocessing but it can be useful to remove unnecessary columns.
+    @log_execution
+    def clear_columns(self, columns_to_clear: List[str]):
+        
+        """
+        Clears the specified columns from the dataset.
+        
+        Parameters:
+        columns_to_clear (list): List of column names to be cleared.
+        """
+        logger.info("Dropping columns: %s", columns_to_clear)
+        self.data.drop(columns=columns_to_clear, inplace=True, errors='ignore')  # Use errors='ignore' to avoid KeyError if column doesn't exist
+        logger.info("Dataset now has %d columns", len(self.data.columns))
     
     # CREATES a copy of the data to avoid modifying the original dataset.   
     @log_execution
