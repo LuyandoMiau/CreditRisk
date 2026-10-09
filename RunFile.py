@@ -2,7 +2,7 @@ import logging
 import os
 import yaml
 from pathlib import Path
-from src.data_preparation import DataReader, DataExplorerAdvanced, DataPreprocessor
+from src.data_preparation import DataReader, DataExplorerAdvanced, DataPreprocessor, PDdataPreparation
 
 # Set up logging configuration
 logging.basicConfig(level=logging.INFO)
@@ -125,9 +125,23 @@ def main():
     empty_values_handler = params["data_preparation"]["data_preprocessor"]["handle_empty_values"]
     columns_to_handle = empty_values_handler["columns"]
     case = empty_values_handler["case"]
-    data_preprocessor.handle_empty_values(columns=columns_to_handle, case=case)
+    preprocessed_data = data_preprocessor.handle_empty_values(columns=columns_to_handle, case=case)
     logger.info(f"NAs handled for the columns {columns_to_handle} using the case {case}.")
     
+    # ============================== PDdataPreparation ==============================
+    
+    # 0. Initialize the class
+    PD_data_prep = PDdataPreparation(data=data_preprocessor.data)
+    
+    # 1. Set up the dependent variable
+    pd_dependent_var = params["data_preparation"]["pd_data_preparation"]["dependent_variable"]
+    pd_list_default_values = params["data_preparation"]["pd_data_preparation"]["list_defaulted_values"]
+    
+    PD_data_prep.dependent_variable_definition(dependent_var=pd_dependent_var, list_defaulted_values=pd_list_default_values)
+    logger.info(
+        f"Summaries of the dependent variable were displayed, being the original values "
+        f"{list(preprocessed_data[pd_dependent_var].unique())} and the list of considered default values {pd_list_default_values}"
+    )
 
 
 if __name__ == "__main__": 

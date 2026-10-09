@@ -534,7 +534,41 @@ class DataPreprocessor:
                     for column in columns:
                         self.data[column] = self.data[column].fillna(self.data[column].max())
         
+        return self.data
 
+class PDdataPreparation:
+    
+    def __init__(self, data: pd.DataFrame):
+            
+            """
+            The init requires the data to be preprocessed. It should be a pandas DataFrame.
+            """
+            self.data = data
+    
+    def dependent_variable_definition(self, dependent_var: str, list_defaulted_values: List[str]):
+        
+        # get a status overview of the different values of the dependent variable
+        status_overview = self.data[dependent_var].value_counts() / self.data[dependent_var].count()
+        
+        # print it out
+        print(f"Status overview of the dependent variable {status_overview}")
+        
+        # AFTER LOOKING AT THE OVERVIEW, THE USER SHOULD BE GIVEN THE OPPORTUNITY TO INPUT A LIST OF NAMES OF VALUES THAT ARE CONSIDER AS DEFAULT
+        # THIS SHOULD BE MADE EASY FOR THE USER SO IT CAN GIVE VALUE BY VALUE AND PYTHON SHOULD TRANSFORM IT INTO A LIST
+        
+        # For now, we will leave it as something that can be given in the parameters
+        
+        # transform it in defaulted and non-defaulted
+        self.data["defaulted_nondefaulted"] = np.where(
+            self.data[dependent_var].isin(list_defaulted_values), 
+            0, 1 # 0 if defaulted, 1 if non-defaulted
+            )
+
+        # get a status overview of the different values of the dependent variable as defaulted and non defaulted
+        defaulted_nondefaulted_overview = self.data["defaulted_nondefaulted"].value_counts()/self.data["defaulted_nondefaulted"].count()
+        
+        # print it out
+        print(f"Status overview of the dependent variable as defaulted and non defaulted {defaulted_nondefaulted_overview}")
 
         
         

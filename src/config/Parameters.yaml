@@ -37,7 +37,10 @@ data_preparation:
         columns: ["issue_d"] # Columns to convert to datetime
         new_column_names: ["issue_d_date"] # New column names after transformation
     reference_date: "2017-12-01" # Reference date for datetime transformations
-    categorical_columns: ["grade", "sub_grade", "home_ownership", "verification_status", "loan_status", "purpose", "addr_state", "initial_list_status"] # List of categorical columns
+    categorical_columns: ["grade", "sub_grade", "home_ownership", "verification_status", "purpose", "addr_state", "initial_list_status"] # List of categorical columns, #loan_status was removed
     handle_empty_values:
       columns: ["annual_inc", "delinq_2yrs", "inq_last_6mths", "open_acc", "pub_rec", "total_acc", "acc_now_delinq", "total_rev_hi_lim", "emp_length_int", "months_since_earliest_credit_line"]
       case: "default_loan_data_2007_2014"
+  pd_data_preparation:
+    dependent_variable: "loan_status"
+    list_defaulted_values: ['Charged Off', 'Charged Off', 'Does not meet the credit policy. Status:Charged Off', 'Late (31-120 days)']
