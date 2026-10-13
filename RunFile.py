@@ -142,6 +142,24 @@ def main():
         f"Summaries of the dependent variable were displayed, being the original values "
         f"{list(preprocessed_data[pd_dependent_var].unique())} and the list of considered default values {pd_list_default_values}"
     )
+    
+    # 2. Split the data between train and test
+    test_data_size = params["data_preparation"]["pd_data_preparation"]["test_data_size"]
+    
+    # Method uses self.data automatically without parameter conflicts
+    data_inputs_train, data_inputs_test, data_output_train, data_output_test = PD_data_prep.train_test_data_split(test_size_given=test_data_size)
+    
+    # 3. Run WoE and IV for several variables and get their plot
+    
+    # ===== NOTE: We can switch between TRAIN and TEST variables ====
+    
+    savepathWoE_plots = params["data_preparation"]["pd_data_preparation"]["WoE_plot_saving_path"]
+    
+    # ----------------- grade
+    grade_col = params["data_preparation"]["pd_data_preparation"]["columns_to_check_WoE"][0]
+    grade_WoE_IV = PD_data_prep.WOE_AND_IV(df_inputs=data_inputs_train, input_col_name=grade_col, df_output=data_output_train)
+    PD_data_prep.plot_by_woe(df_WOE=grade_WoE_IV, save_path=savepathWoE_plots, rotation_of_x_axis_labels=0)
+    logger.info(f"WoE, IV and WoE plot save for the variable: {grade_col}")
 
 
 if __name__ == "__main__": 

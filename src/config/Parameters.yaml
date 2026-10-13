@@ -44,3 +44,6 @@ data_preparation:
   pd_data_preparation:
     dependent_variable: "loan_status"
     list_defaulted_values: ['Charged Off', 'Charged Off', 'Does not meet the credit policy. Status:Charged Off', 'Late (31-120 days)']
+    test_data_size: 0.2
+    columns_to_check_WoE: ["grade"]
+    WoE_plot_saving_path: "/Users/bonjour/Documents/Credit_Risk/Credit Risk - Python/Output/Graphs/WoE"

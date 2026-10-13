@@ -19,6 +19,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from pathlib import Path
 from typing import Dict, List, Tuple, Any, Optional, Union, Literal
+from sklearn.model_selection import train_test_split
 
 logger = logging.getLogger(__name__)
 
@@ -451,13 +452,15 @@ class DataPreprocessor:
         logger.info("Creating dummy variables for columns: %s", categorical_columns)
         
         # Pass the full dataset (self.data) and specify columns=categorical_columns
-        self.data = pd.get_dummies(
-            self.data, 
-            columns=categorical_columns, 
+        # Dummies are built from the categorical columns only and concatenated back,
+        # so the ORIGINAL columns (e.g. 'grade') are kept for WoE/IV
+        dummies = pd.get_dummies(
+            self.data[categorical_columns], 
             prefix=categorical_columns, 
             prefix_sep=":", 
             dtype=int
         )
+        self.data = pd.concat([self.data, dummies], axis=1)
         logger.info("Dummy variables created. Dataset now has %d columns", len(self.data.columns))
         
     # Handle empty values in the dataset
@@ -569,13 +572,209 @@ class PDdataPreparation:
         
         # print it out
         print(f"Status overview of the dependent variable as defaulted and non defaulted {defaulted_nondefaulted_overview}")
+        
+        # Return statement so that the updated data can be used by the next functions
+        return self.data
+        
+    @log_execution
+    def train_test_data_split(
+        self, 
+        test_size_given: float, 
+        random_state: int = 42,
+        target_col: str = "defaulted_nondefaulted"
+    ) -> Tuple[pd.DataFrame, pd.DataFrame, pd.Series, pd.Series]:
+        """
+        Splits the dataset into training and test sets for inputs (features) and output (target).
+        
+        Parameters:
+            test_size_given (float): Proportion of dataset to include in the test split (e.g. 0.2).
+            df (pd.DataFrame, optional): Custom DataFrame to split. If None, uses self.data.
+            random_state (int): Controls the shuffling applied to the data before applying the split.
+            target_col (str): Target column name representing the dependent variable.
+            
+        Returns:
+            Tuple[pd.DataFrame, pd.DataFrame, pd.Series, pd.Series]:
+                (data_inputs_train, data_inputs_test, data_output_train, data_output_test)
+        """
+        # Use provided DataFrame or default to updated instance data (self.data)
+        data_to_split = self.data
 
-        
-        
-        
-        
+        if target_col not in data_to_split.columns:
+            raise KeyError(
+                f"Target column '{target_col}' not found in DataFrame. "
+                "Ensure dependent_variable_definition() was run previously."
+            )
 
+        # Define the split between test and train for the output variable and the input variables
+        data_inputs_train, data_inputs_test, data_output_train, data_output_test = train_test_split(
+            data_to_split.drop(target_col, axis=1), 
+            data_to_split[target_col], 
+            test_size=test_size_given, 
+            random_state=random_state,
+            stratify=data_to_split[target_col]  # Stratify to preserve target class proportions
+        )
         
+        # Print the shapes
+        print(
+            f"Train data inputs shape is: {data_inputs_train.shape}\n"
+            f"Test data inputs shape is: {data_inputs_test.shape}\n"
+            f"Train data output shape is: {data_output_train.shape}\n"
+            f"Test data output shape is: {data_output_test.shape}"
+        )
 
+        return data_inputs_train, data_inputs_test, data_output_train, data_output_test
+
+    @staticmethod    
+    def WOE_AND_IV(
+            df_inputs: pd.DataFrame, 
+            input_col_name: str, 
+            df_output: pd.DataFrame # here the output variable, in our case with the info of the defaults
+    ):
         
-    
+        """
+        Calculates the Weight of Evidence (WoE) and the Information Value (IV) of a variable.
+        
+        ########### Weight of Evidence ###########
+
+        The extent to which a categorical independet variable expalins the difference of a categorical outcome variable.
+
+        WoE(i) = ln(%(y=1)(i)/%(y=0)(i)) = ln(%non-defaulted(i)/defaulted(i))
+
+        ===> more positive = higher propensity of the category to bring us to a non-default result 
+        ===> more negative = higher propensity of the category to bring us to a defualted result
+
+        Based on the WoE we can coerce different categories into one (when the WoE is similar and the categories are connected: next to each other sequentially)
+        
+        ########## Information Value ###########
+
+        This is to check the actual value of a variable by adding up the meaning proportions of all its categories.
+
+        How much information the original independent variable brings with respect to expalining the dependent variable
+
+        Information Value (IV) = summatory[(%non-defaulted - %defaulted)*ln(%non-defaulted/defaulted)]
+                                = summatory[(%non-defaulted - %defaulted)*WoE]
+
+        We can use this for pre-selection fo variables
+
+        One could also alternatively use PCA (Princiapl component analysis)
+
+        IV ranges:
+        - > 0.02 --> no predictive power
+        - 0.02 < IV < 0.1 --> weak predictive power
+        - 0.1 < IV < 0.3 --> mid predictive power
+        - 0.3 < IV < 0.5 --> strong predictive power
+        - 0.5 IV --> suspiciously high predictive power
+
+        Paramaters:
+            df_inputs: the df including the input variable we want to check
+            input_col_name: the name of the input column we would like to check and that contains the categories in which our analysis will be split
+            df_output: here the output variable, in our case with the info of the defaults
+            
+        Returns:
+            A data frame that displays several sumamrizing columns including the WoE and the IV.
+        """
+
+        # Let's get a data frame in which we only have the output variable and the grades/ratings
+        df = pd.concat([df_inputs[input_col_name], df_output], axis=1) # axis=1 concatenate columns
+
+        # ==================== Let's calculate the Weight of Evidence (WoE) ==========================
+        
+        # Group by grade and count the rows per grade
+        df.groupby(df.columns.values[0], as_index=False)[df.columns.values[1]].count()
+
+        # We also need the proportion of defaulted/non-defaulted borrowers per group
+        # Let's get the proportion of non_defaults and as we have 1 (non default), 0 (default) we can take the average
+        df.groupby(df.columns.values[0], as_index=False)[df.columns.values[1]].mean()
+
+        # Merge the two results into one data frame
+        df = pd.concat([df.groupby(df.columns.values[0], as_index=False)[df.columns.values[1]].count(), 
+                        df.groupby(df.columns.values[0], as_index=False)[df.columns.values[1]].mean()],
+                        axis=1
+                        )
+        # MISCELLANEOUS ===================================================
+        # Not to get two times grade column
+        df = df.iloc[:, [0,1,3]]
+        # Change the names of the columns
+        df.columns = [df.columns.values[0], 'n_obs', 'prop_nondefaulted']
+        # ==================================================================
+
+        # Get the necesary calculations to get the WoE ============>
+
+        # Get the proportion of number of observations
+        df['prop_n_obs'] = df.n_obs/df.n_obs.sum()
+        # Calculate the number of non-defaulted and defaulted borrowers per group
+        df['n_nondefaulted'] = df.prop_nondefaulted * df.n_obs
+        df['n_defaulted'] = (1-df.prop_nondefaulted) * df.n_obs
+        # Calculate the propensity of non-defaulted and defaulted borrowers
+        df['prop_n_nondefaulted'] = df.n_nondefaulted / df.n_nondefaulted.sum()
+        df['prop_n_defaulted'] = df.n_defaulted / df.n_defaulted.sum()
+
+        # Get the Weight of Evidence ============>
+        df['WoE'] = np.log(df['prop_n_nondefaulted']/df['prop_n_defaulted'])
+        df = df.sort_values(['WoE'])
+        df = df.reset_index(drop=True)
+
+        # Get the differences of two subsequent rows, abs() to see the net effect
+        df['diff_prop_nondefaulted'] = df.prop_nondefaulted.diff().abs()
+        df['diff_WoE'] = df.WoE.diff().abs()
+
+        # ==================== Let's calculate the Information Value (IV) ==========================
+        df['IV'] = (df.prop_n_nondefaulted - df.prop_n_defaulted) * df.WoE
+        df['IV'] = df['IV'].sum() # All categories get the same value, because IV acts per variable
+        
+        return df
+
+    sns.set()
+    # Function to plot the WoE
+    @staticmethod
+    def plot_by_woe(
+        df_WOE: pd.DataFrame, 
+        save_path: str, 
+        rotation_of_x_axis_labels: int = 0
+    ):
+        """Parameters:
+
+            df_WOE: df obtained by the function WOE_AND_IV
+            save_path: destination file path (e.g.,
+            'reports/figures/woe_income.png')
+            rotation_of_x_axis_labels: in case we have too many names in the
+            X-axis we adjust this
+
+        Returns:
+            A saved plot in high quality at the specified save_path
+        """
+
+        # Define the plot variables
+        x = np.array(df_WOE.iloc[:, 0]).astype(str)  # Get categories as strings
+        y = df_WOE["WoE"]
+
+        # Create figure and set size
+        fig, ax = plt.subplots(figsize=(18, 6))
+
+        # Plot data
+        ax.plot(x, y, marker="o", linestyle="--", color="k")
+
+        # Set labels and title
+        ax.set_xlabel(df_WOE.columns[0])
+        ax.set_ylabel("Weight of Evidence")
+        ax.set_title(f"Weight of Evidence by {df_WOE.columns[0]}")
+        ax.tick_params(axis="x", rotation=rotation_of_x_axis_labels)
+
+        # Add grid for improved readability
+        ax.grid(True, linestyle=":", alpha=0.6)
+
+        # Ensure target directory exists before saving
+        # Save_path is now treated as a DIRECTORY and the file name is built from the variable name
+        output_dir = Path(save_path)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        file_path = output_dir / f"WoE_{df_WOE.columns[0]}.png"
+
+        # Save plot in publication quality
+        plt.savefig(
+            file_path,  # NEW: full file path instead of the folder
+            dpi=300,  # High resolution (300 DPI for publication quality)
+            bbox_inches="tight",  # Fits labels tightly so text/axis don't get cut off
+            pad_inches=0.2,  # Adds clean margin padding around the saved image
+            transparent=False,  # Solid white background
+            format="png",  # PNG lossless image format
+        )
