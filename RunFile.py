@@ -160,6 +160,8 @@ def main():
     grade_WoE_IV = PD_data_prep.WOE_AND_IV(df_inputs=data_inputs_train, input_col_name=grade_col, df_output=data_output_train)
     PD_data_prep.plot_by_woe(df_WOE=grade_WoE_IV, save_path=savepathWoE_plots, rotation_of_x_axis_labels=0)
     logger.info(f"WoE, IV and WoE plot save for the variable: {grade_col}")
+    
+    # NOW MAKE FOR THE OTHERS AND IN THE END USE A FOR LOOP TO MAKE THE PROCESS COVER ALL VARIABLES IN "columns_to_check_WoE"
 
 
 if __name__ == "__main__": 
