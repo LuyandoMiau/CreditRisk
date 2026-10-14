@@ -456,6 +456,7 @@ class DataPreprocessor:
         # so the ORIGINAL columns (e.g. 'grade') are kept for WoE/IV
         dummies = pd.get_dummies(
             self.data[categorical_columns], 
+            columns=categorical_columns, # This forces numeric columns (e.g. term_int) to be encoded too
             prefix=categorical_columns, 
             prefix_sep=":", 
             dtype=int
@@ -632,7 +633,8 @@ class PDdataPreparation:
     def WOE_AND_IV(
             df_inputs: pd.DataFrame, 
             input_col_name: str, 
-            df_output: pd.DataFrame # here the output variable, in our case with the info of the defaults
+            df_output: pd.DataFrame, # here the output variable, in our case with the info of the defaults
+            discrete: bool
     ):
         
         """
@@ -715,8 +717,11 @@ class PDdataPreparation:
 
         # Get the Weight of Evidence ============>
         df['WoE'] = np.log(df['prop_n_nondefaulted']/df['prop_n_defaulted'])
-        df = df.sort_values(['WoE'])
-        df = df.reset_index(drop=True)
+        
+        # Condition for DISCRETE VARIABLES
+        if discrete:
+            df = df.sort_values(['WoE'])
+            df = df.reset_index(drop=True)
 
         # Get the differences of two subsequent rows, abs() to see the net effect
         df['diff_prop_nondefaulted'] = df.prop_nondefaulted.diff().abs()

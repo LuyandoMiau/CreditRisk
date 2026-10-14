@@ -162,12 +162,12 @@ def main():
     # ============ DISCRETE VARIABLES ========================= #
     
     # Define a list for the reference categories:
-    reference_categories_dict = {}
+    reference_categories_dict_discrete = {}
     
     # Loop over every original variable defined in Parameters.yaml
-    for col in pd_params["columns_to_check_WoE"]:
+    for col in pd_params["columns_to_check_WoE_discrete"]:
         # WoE and IV
-        col_WoE_IV = PD_data_prep.WOE_AND_IV(df_inputs=data_inputs, input_col_name=col, df_output=data_output)
+        col_WoE_IV = PD_data_prep.WOE_AND_IV(df_inputs=data_inputs, input_col_name=col, df_output=data_output, discrete=True)
         # Plot before aggregating, so the plot shows all the original categories
         PD_data_prep.plot_by_woe(df_WOE=col_WoE_IV, save_path=savepathWoE_plots, rotation_of_x_axis_labels=0)
         logger.info(f"WoE, IV and WoE plot save for the variable: {col} (IV = {col_WoE_IV['IV'].iloc[0]:.4f})")
@@ -177,9 +177,35 @@ def main():
             max_gap_ratio=merge_rules["max_gap_ratio"], max_span_ratio=merge_rules["max_span_ratio"],
         )
         logger.info(f"Reference category for {col}: {reference_category}")
-        reference_categories_dict[col] = reference_category
+        reference_categories_dict_discrete[col] = reference_category
         
-    logger.info(f"The complete dictionary of reference categories is: {reference_categories_dict}")
+    logger.info(f"The complete dictionary of reference categories is: {reference_categories_dict_discrete}")
+    
+    # GET FULL LIST OF COLUMNS OF THE CURRENT UPDATED DF
+    # One column per line, with its position (easiest to read)
+    print(*[f"{i}: {c}" for i, c in enumerate(data_inputs.columns)], sep="\n")
+    
+    # ============ CONTINOUS VARIABLES ========================= #
+        
+    # Define a list for the reference categories:
+    reference_categories_dict_continous = {}
+        
+    # Loop over every original variable defined in Parameters.yaml
+    for col in pd_params["columns_to_check_WoE_continous"]:
+        # WoE and IV
+        col_WoE_IV = PD_data_prep.WOE_AND_IV(df_inputs=data_inputs, input_col_name=col, df_output=data_output, discrete=False)
+        # Plot before aggregating, so the plot shows all the original categories
+        PD_data_prep.plot_by_woe(df_WOE=col_WoE_IV, save_path=savepathWoE_plots, rotation_of_x_axis_labels=0)
+        logger.info(f"WoE, IV and WoE plot save for the variable: {col} (IV = {col_WoE_IV['IV'].iloc[0]:.4f})")
+        # Aggregate similar dummies. data_inputs is re-assigned so the next iteration starts from the adjusted df
+        data_inputs, reference_category = PD_data_prep.add_dummy_varibles_similar_WoE(
+            df_inputs=data_inputs, df_WOE=col_WoE_IV, original_col=col,
+            max_gap_ratio=merge_rules["max_gap_ratio"], max_span_ratio=merge_rules["max_span_ratio"],
+        )
+        logger.info(f"Reference category for {col}: {reference_category}")
+        reference_categories_dict_continous[col] = reference_category
+        
+    logger.info(f"The complete dictionary of reference categories is: {reference_categories_dict_continous}")
     
     # GET FULL LIST OF COLUMNS OF THE CURRENT UPDATED DF
     # One column per line, with its position (easiest to read)
