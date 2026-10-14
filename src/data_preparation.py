@@ -547,6 +547,10 @@ class PDdataPreparation:
             The init requires the data to be preprocessed. It should be a pandas DataFrame.
             """
             self.data = data
+            
+            # NEW: memory of the aggregation done by add_dummy_varibles_similar_WoE (one entry per original variable)
+            self.dummy_groups: Dict[str, Dict[str, List[str]]] = {}  # {original_col: {new_dummy: [dummies that were summed]}}
+            self.reference_categories: Dict[str, Optional[str]] = {}  # {original_col: reference dummy}
     
     def dependent_variable_definition(self, dependent_var: str, list_defaulted_values: List[str]):
         
@@ -779,7 +783,15 @@ class PDdataPreparation:
             format="png",  # PNG lossless image format
         )
     
-    def add_dummy_varibles_similar_WoE():
+    @log_execution
+    def add_dummy_varibles_similar_WoE(
+        self,
+        df_inputs: pd.DataFrame,
+        df_WOE: pd.DataFrame,
+        original_col: str,
+        max_gap_ratio: float = 0.25,
+        max_span_ratio: float = 0.15,
+    ) -> Tuple[pd.DataFrame, Optional[str]]:
         
         """
         What this function should do is create aggregated dummy variables depending on the following characteristics
@@ -824,5 +836,112 @@ class PDdataPreparation:
         
         Important, as this will embdedded in a loop for all variables, it is important that the function can rely on "self" and that each iteration contains the adjustments to the df (the matched up newly created dummy category for an specific variable, while deleting the dummy categories that created it)
         
+        
+
+        ================== CRITERIA IMPLEMENTED (explicit rules) ==================
+        
+        Notation: the categories of the variable are ordered by WoE (lowest to highest) -> w_0 <= w_1 <= ... <= w_k
+        
+        gap_j       = w_j - w_(j-1)               difference between two CONSECUTIVE categories
+        max_gap     = max(gap_j)                  biggest difference between two consecutive categories
+        total_range = w_k - w_0                   difference between the minimal and the maximal WoE
+        span        = w_j - w_(first of group)    difference between the minimal and the current WoE inside a group
+        
+        Category j is added to the group of category j-1 ONLY IF BOTH conditions hold:
+        
+        RULE 1 (consecutive difference is minimal compared with the maximal consecutive difference):
+                gap_j <= max_gap_ratio * max_gap
+        RULE 2 (the whole group stays minimal compared with the min-max difference, this avoids "chaining" A-B, B-C, C-D... into a huge group):
+                span <= max_span_ratio * total_range
+        
+        Otherwise category j opens a new group. This gives these properties:
+        - Only categories that are NEXT to each other in the WoE scale are matched (groups are contiguous)
+        - Several groups (and several single categories) can coexist: e.g. A-B together, C alone, D alone, E-F together
+        - Since max_gap_ratio < 1, the biggest gap is NEVER bridged, so the variable always keeps at least 2 dummies
+        - A category with a non finite WoE (no defaults or no non-defaulted observations -> +-inf) is NOT matched, it is kept 
+          as it is and a warning is logged, because its WoE can not be compared (the user should review it)
+        - The reference category is the group with the lowest WoE (the first one in the ordered scale)
+        - The original variable (e.g. 'home_ownership') is never deleted, only the dummies that were summed up
+        - max_gap_ratio and max_span_ratio are starting points, they should be calibrated looking at the WoE plots
+        
+        Parameters:
+            df_inputs: the df with the original variable and its dummies, it is NOT modified, a new df is returned
+            df_WOE: result of WOE_AND_IV for original_col
+            original_col: the original variable from which the dummies ("original_col:category") were derived
+            max_gap_ratio: RULE 1 (0 < ratio < 1)
+            max_span_ratio: RULE 2
+        
+        Returns:
+            (df_inputs with the aggregated dummies, name of the reference dummy category or None)
         """
         
+        # ---- 0. Safety checks ----
+        if df_WOE.columns[0] != original_col:
+            raise ValueError(f"df_WOE belongs to '{df_WOE.columns[0]}' but original_col is '{original_col}'.")
+        if not 0 < max_gap_ratio < 1:
+            raise ValueError("max_gap_ratio must be between 0 and 1 (exclusive), otherwise the variable could collapse into one dummy.")
+
+        # The dummies were created as "<original_col>:<category>" (see DataPreprocessor.create_dummy_variables)
+        dummy_of = {c: f"{original_col}:{c}" for c in df_WOE[original_col]}
+        missing = [d for d in dummy_of.values() if d not in df_inputs.columns]
+        if missing:
+            raise KeyError(f"Dummy columns not found in df_inputs: {missing}. Were they already aggregated for '{original_col}'?")
+
+        # ---- 1. Order the categories by WoE and separate the ones with a non finite WoE ----
+        woe = df_WOE.sort_values("WoE")
+        is_finite = np.isfinite(woe["WoE"])
+        if (~is_finite).any():
+            logger.warning("'%s': categories with non finite WoE are kept as they are (review them): %s",
+                           original_col, woe.loc[~is_finite, original_col].tolist())
+        woe = woe[is_finite]
+        categories = woe[original_col].tolist()
+        w = woe["WoE"].to_numpy()
+
+        if len(categories) == 0:
+            logger.warning("'%s': no category with a finite WoE, nothing was aggregated", original_col)
+            self.dummy_groups[original_col] = {}
+            self.reference_categories[original_col] = None
+            return df_inputs, None
+
+        # ---- 2. Build the groups of contiguous categories with similar WoE ----
+        gaps = np.diff(w)  # gaps[j-1] = w_j - w_(j-1)
+        max_gap = gaps.max() if len(gaps) else 0.0
+        total_range = w[-1] - w[0]
+
+        groups = [[categories[0]]]
+        group_start_woe = w[0]
+        for j in range(1, len(categories)):
+            rule_1 = gaps[j - 1] <= max_gap_ratio * max_gap
+            rule_2 = (w[j] - group_start_woe) <= max_span_ratio * total_range
+            if rule_1 and rule_2:
+                groups[-1].append(categories[j]) # similar to the previous one -> same group
+            else:
+                groups.append([categories[j]]) # not similar -> new group
+                group_start_woe = w[j]
+
+        # Guarantee at least two dummies (only reachable if all the WoE are identical)
+        if len(groups) < 2:
+            groups = [[c] for c in categories]
+
+        # ---- 3. Names of the resulting dummies and of the reference category ----
+        group_names = [
+            dummy_of[g[0]] if len(g) == 1 else f"{original_col}:" + "_".join(str(c) for c in g)
+            for g in groups
+        ]
+        # Groups are ordered by WoE and a group WoE always lies between the WoE of its members, so the first group has the lowest WoE
+        reference_category = group_names[0]
+
+        # ---- 4. Apply: add the summed dummies, delete only the dummies that were used in the sum ----
+        merged = {name: [dummy_of[c] for c in g] for name, g in zip(group_names, groups) if len(g) > 1}
+        if merged:
+            new_columns = pd.DataFrame({name: df_inputs[cols].sum(axis=1) for name, cols in merged.items()})
+            used_columns = [c for cols in merged.values() for c in cols]
+            df_inputs = pd.concat([df_inputs.drop(columns=used_columns), new_columns], axis=1)
+
+        # ---- 5. Keep a memory in self so every loop iteration (and a later re-application) knows what was done ----
+        self.dummy_groups[original_col] = merged
+        self.reference_categories[original_col] = reference_category
+        logger.info("'%s': %d categories -> %d dummies. Aggregated: %s. Reference category: %s",
+                    original_col, len(categories), len(groups), merged if merged else "none", reference_category)
+
+        return df_inputs, reference_category

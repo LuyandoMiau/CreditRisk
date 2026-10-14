@@ -45,5 +45,8 @@ data_preparation:
     dependent_variable: "loan_status"
     list_defaulted_values: ['Charged Off', 'Charged Off', 'Does not meet the credit policy. Status:Charged Off', 'Late (31-120 days)']
     test_data_size: 0.2
-    columns_to_check_WoE: ["grade", "home_ownership"]
+    columns_to_check_WoE: ["grade", "home_ownership", "addr_state", "verification_status", "purpose", "initial_list_status"]
     WoE_plot_saving_path: "/Users/bonjour/Documents/Credit_Risk/Credit Risk - Python/Output/Graphs/WoE"
+    WoE_merge_rules:
+      max_gap_ratio: 0.25   # RULE 1: gap vs. biggest consecutive gap (must be < 1)
+      max_span_ratio: 0.15

@@ -155,25 +155,35 @@ def main():
     data_inputs = data_inputs_train
     data_output = data_output_train
     
-    savepathWoE_plots = params["data_preparation"]["pd_data_preparation"]["WoE_plot_saving_path"]
+    pd_params = params["data_preparation"]["pd_data_preparation"]
+    savepathWoE_plots = pd_params["WoE_plot_saving_path"]
+    merge_rules = pd_params["WoE_merge_rules"]
     
-    # ----------------- grade
-    grade_col = params["data_preparation"]["pd_data_preparation"]["columns_to_check_WoE"][0]
-    grade_WoE_IV = PD_data_prep.WOE_AND_IV(df_inputs=data_inputs, input_col_name=grade_col, df_output=data_output)
-    PD_data_prep.plot_by_woe(df_WOE=grade_WoE_IV, save_path=savepathWoE_plots, rotation_of_x_axis_labels=0)
-    logger.info(f"WoE, IV and WoE plot save for the variable: {grade_col}")
+    # ============ DISCRETE VARIABLES ========================= #
     
-    # apply add_dummy_varibles_similar_WoE
+    # Define a list for the reference categories:
+    reference_categories_dict = {}
     
-    # ----------------- home_ownership
-    home_ownership_col = params["data_preparation"]["pd_data_preparation"]["columns_to_check_WoE"][1]
-    home_ownership_WoE_IV = PD_data_prep.WOE_AND_IV(df_inputs=data_inputs, input_col_name=home_ownership_col, df_output=data_output)
-    PD_data_prep.plot_by_woe(df_WOE=home_ownership_WoE_IV, save_path=savepathWoE_plots, rotation_of_x_axis_labels=0)
-    logger.info(f"WoE, IV and WoE plot save for the variable: {home_ownership_col}")
+    # Loop over every original variable defined in Parameters.yaml
+    for col in pd_params["columns_to_check_WoE"]:
+        # WoE and IV
+        col_WoE_IV = PD_data_prep.WOE_AND_IV(df_inputs=data_inputs, input_col_name=col, df_output=data_output)
+        # Plot before aggregating, so the plot shows all the original categories
+        PD_data_prep.plot_by_woe(df_WOE=col_WoE_IV, save_path=savepathWoE_plots, rotation_of_x_axis_labels=0)
+        logger.info(f"WoE, IV and WoE plot save for the variable: {col} (IV = {col_WoE_IV['IV'].iloc[0]:.4f})")
+        # Aggregate similar dummies. data_inputs is re-assigned so the next iteration starts from the adjusted df
+        data_inputs, reference_category = PD_data_prep.add_dummy_varibles_similar_WoE(
+            df_inputs=data_inputs, df_WOE=col_WoE_IV, original_col=col,
+            max_gap_ratio=merge_rules["max_gap_ratio"], max_span_ratio=merge_rules["max_span_ratio"],
+        )
+        logger.info(f"Reference category for {col}: {reference_category}")
+        reference_categories_dict[col] = reference_category
+        
+    logger.info(f"The complete dictionary of reference categories is: {reference_categories_dict}")
     
-    # apply add_dummy_varibles_similar_WoE
-    
-    # NOW MAKE FOR THE OTHERS AND IN THE END USE A FOR LOOP TO MAKE THE PROCESS COVER ALL VARIABLES IN "columns_to_check_WoE"
+    # GET FULL LIST OF COLUMNS OF THE CURRENT UPDATED DF
+    # One column per line, with its position (easiest to read)
+    print(*[f"{i}: {c}" for i, c in enumerate(data_inputs.columns)], sep="\n")
 
 
 if __name__ == "__main__": 
