@@ -152,14 +152,26 @@ def main():
     # 3. Run WoE and IV for several variables and get their plot
     
     # ===== NOTE: We can switch between TRAIN and TEST variables ====
+    data_inputs = data_inputs_train
+    data_output = data_output_train
     
     savepathWoE_plots = params["data_preparation"]["pd_data_preparation"]["WoE_plot_saving_path"]
     
     # ----------------- grade
     grade_col = params["data_preparation"]["pd_data_preparation"]["columns_to_check_WoE"][0]
-    grade_WoE_IV = PD_data_prep.WOE_AND_IV(df_inputs=data_inputs_train, input_col_name=grade_col, df_output=data_output_train)
+    grade_WoE_IV = PD_data_prep.WOE_AND_IV(df_inputs=data_inputs, input_col_name=grade_col, df_output=data_output)
     PD_data_prep.plot_by_woe(df_WOE=grade_WoE_IV, save_path=savepathWoE_plots, rotation_of_x_axis_labels=0)
     logger.info(f"WoE, IV and WoE plot save for the variable: {grade_col}")
+    
+    # apply add_dummy_varibles_similar_WoE
+    
+    # ----------------- home_ownership
+    home_ownership_col = params["data_preparation"]["pd_data_preparation"]["columns_to_check_WoE"][1]
+    home_ownership_WoE_IV = PD_data_prep.WOE_AND_IV(df_inputs=data_inputs, input_col_name=home_ownership_col, df_output=data_output)
+    PD_data_prep.plot_by_woe(df_WOE=home_ownership_WoE_IV, save_path=savepathWoE_plots, rotation_of_x_axis_labels=0)
+    logger.info(f"WoE, IV and WoE plot save for the variable: {home_ownership_col}")
+    
+    # apply add_dummy_varibles_similar_WoE
     
     # NOW MAKE FOR THE OTHERS AND IN THE END USE A FOR LOOP TO MAKE THE PROCESS COVER ALL VARIABLES IN "columns_to_check_WoE"
 

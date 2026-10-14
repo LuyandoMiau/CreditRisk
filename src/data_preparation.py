@@ -778,3 +778,51 @@ class PDdataPreparation:
             transparent=False,  # Solid white background
             format="png",  # PNG lossless image format
         )
+    
+    def add_dummy_varibles_similar_WoE():
+        
+        """
+        What this function should do is create aggregated dummy variables depending on the following characteristics
+        
+        WOE_AND_IV function gets us the WoE and the IV in a df for all the distinct values of a variable in the df
+        
+        Now, these variables were previously split into dummy categories (e.g. grade into ['grade:A', 'grade:B', 'grade:C', 'grade:D', 'grade:E', 'grade:F', 'grade:G'])
+        
+        Some categories are relevant for the analisis, but some do not add enough value so they should be combined with others
+        
+        Lets give an example using the original variable: home_ownership
+        
+        The dummy variables derived from it were: "home_ownership:RENT", "home_ownership:OTHER", "home_ownership:NONE", "home_ownership:ANY", "home_ownership:OWN", "home_ownership:MORTGAGE"
+        
+        It was reviewed in a Jupyter Notebook it was determined that this categories were to be combined into one:
+        df_inputs_prepr['home_ownership:RENT_OTHER_NONE_ANY'] = sum([df_inputs_prepr["home_ownership:RENT"],
+                                                            df_inputs_prepr["home_ownership:OTHER"],
+                                                            df_inputs_prepr["home_ownership:NONE"],
+                                                            df_inputs_prepr["home_ownership:ANY"]])
+        Leaving us with new variables for home_ownership: ['home_ownership:RENT_OTHER_NONE_ANY', 'home_ownership:MORTGAGE', 'home_ownership:OWN']
+        
+        And then determining that given that it was the category with the lowest WoE overall, that 'home_ownership:RENT_OTHER_NONE_ANY' was to be set as the reference category
+        
+        THIS FUNCTION, should find out which categories (dummies) for the variables can be added up (smashed together)
+        
+        The criteria should be:
+        - Categories that are smashed up are to be find next to each other in a escale of WoE
+        - The continuous difference in the weight of evidence for the smashed up categories is minimal in comparison to maximal difference between two consecutive categories (and also between the minimal and the maximal) --> Create a rule here
+        - The number of categories to be smashed up has no maximal or minimal, but in the end, the original variable must consist of at least two dummies
+        - The original variable should not be deleted
+        - The function should find gaps, I mean, example a variable has dummies (ordered by WoE from lower to higher value): A, B, C, D, E, F ---> It can match up A-B together, find out that C and D belong to categories fo themselves and then also match up E-F, this is allowed
+        - The explicit criteria should be explicitely defined here and comemnted
+        
+        The inputs of the function should be:
+        - The df (in this case it will be in the RunFile the one name as data_inputs, but dont declare it explicitely here)
+        - WOE_AND_IV df result
+        - The original column from which the dummies were derived --> The function then will look for the dummies generates from this variable and then using the df from WOE_AND_IV function, it see what can be matched up
+        
+        The output of this function should be 
+        - the df having the newly added variable for a specific variable, while deleting the variables that we used in the sum up (not the others).
+        - while also returning which is the reference category for that variable
+        
+        Important, as this will embdedded in a loop for all variables, it is important that the function can rely on "self" and that each iteration contains the adjustments to the df (the matched up newly created dummy category for an specific variable, while deleting the dummy categories that created it)
+        
+        """
+        
