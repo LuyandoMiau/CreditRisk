@@ -13,7 +13,7 @@ dependencies:
 # Data exploration
 data_exploration:
   data_explorer_advanced_sqlite:
-    db_path: "/Users/bonjour/Documents/Credit_Risk/Credit Risk - Python/src/SQLite_database/loan_data_2007_2014.db" # Path to the SQLite database file
+    db_path: "/Users/bonjour/Documents/Credit_Risk/Credit Risk - Python/Output/Exploratory_SQLite_Datasets/loan_data_2007_2014_1st_exploration.db" # Path to the SQLite database file
     table_name: "loan_data" # Name of the table in the SQLite database
 
 # Data preparation parameters
@@ -37,7 +37,7 @@ data_preparation:
         columns: ["issue_d"] # Columns to convert to datetime
         new_column_names: ["issue_d_date"] # New column names after transformation
     reference_date: "2017-12-01" # Reference date for datetime transformations
-    categorical_columns: ["grade", "sub_grade", "home_ownership", "verification_status", "purpose", "addr_state", "initial_list_status", "term_int", "emp_length_int"] # term_int is numeric but only has two values (36, 60), so it gets dummies like a categorical
+    categorical_columns: ["grade", "sub_grade", "home_ownership", "verification_status", "purpose", "addr_state", "initial_list_status", "term_int"] # List of categorical columns, #loan_status was removed. term_int is numeric but only has two values (36, 60), so it gets dummies like a categorical
     handle_empty_values:
       columns: ["annual_inc", "delinq_2yrs", "inq_last_6mths", "open_acc", "pub_rec", "total_acc", "acc_now_delinq", "total_rev_hi_lim", "emp_length_int", "months_since_earliest_credit_line"]
       case: "default_loan_data_2007_2014"
@@ -45,9 +45,30 @@ data_preparation:
     dependent_variable: "loan_status"
     list_defaulted_values: ['Charged Off', 'Charged Off', 'Does not meet the credit policy. Status:Charged Off', 'Late (31-120 days)']
     test_data_size: 0.2
-    columns_to_check_WoE_discrete: ["grade", "home_ownership", "addr_state", "verification_status", "purpose", "initial_list_status"]
-    columns_to_check_WoE_continous: ["term_int", "emp_length_int"]
+    # ---------------- DISCRETE: variables with dummies already created (they must be in categorical_columns) ----------------
+    columns_to_check_WoE_discrete: ["grade", "home_ownership", "addr_state", "verification_status", "purpose", "initial_list_status", "term_int"]
     WoE_plot_saving_path: "/Users/bonjour/Documents/Credit_Risk/Credit Risk - Python/Output/Graphs/WoE"
-    WoE_merge_rules:
-      max_gap_ratio: 0.25   # RULE 1: gap vs. biggest consecutive gap (must be < 1)
+    WoE_merge_rules: # discrete: RULE 1 and RULE 2 (see add_dummy_varibles_similar_WoE)
+      max_gap_ratio: 0.25
       max_span_ratio: 0.15
+    # ---------------- CONTINOUS: variables that get fine classing (bins) and coarse classing ----------------
+    WoE_continous_defaults: # used for every continuous variable unless it overrides them below
+      n_bins: 50 # fine classing: number of intervals of the same width
+      coarse_method: "auto" # "auto" = proposed by the rules | "manual" = use coarse_boundaries | "none" = only fine classing + plot (to review it)
+      max_span_ratio: 0.15 # auto defined: a group may span at most this share of the total WoE range
+      min_prop_obs: 0.05 # auto defined: groups with fewer observations (share of all rows) are merged with a neighbour
+    columns_to_check_WoE_continous: # {} = defaults. Other options: upper_cap, coarse_method, coarse_boundaries, n_bins, max_span_ratio, min_prop_obs
+      months_since_issue_date: {}
+      int_rate: {}
+      months_since_earliest_credit_line: {}
+      delinq_2yrs: {}
+      inq_last_6mths: {}
+      open_acc: {}
+      pub_rec: {}
+      total_acc: {}
+      acc_now_delinq: {}
+      total_rev_hi_lim: {}
+      annual_inc: {upper_cap: 140000} # almost all the data is below this value: n_bins intervals up to it, one last interval above it
+      mths_since_last_delinq: {} # has missing values: they become their own category 'Missing'
+      dti: {upper_cap: 35}
+      mths_since_last_record: {} # has missing values: they become their own category 'Missing'

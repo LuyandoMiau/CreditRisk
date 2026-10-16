@@ -187,20 +187,35 @@ def main():
     
     # ============ CONTINOUS VARIABLES ========================= #
         
-    # Define a list for the reference categories:
+    # Define a dictionary for the reference categories:
     reference_categories_dict_continous = {}
+    
+    # Defaults for all the continuous variables, each variable can override them in Parameters.yaml
+    continous_defaults = pd_params["WoE_continous_defaults"]
         
     # Loop over every original variable defined in Parameters.yaml
-    for col in pd_params["columns_to_check_WoE_continous"]:
-        # WoE and IV
-        col_WoE_IV = PD_data_prep.WOE_AND_IV(df_inputs=data_inputs, input_col_name=col, df_output=data_output, discrete=False)
-        # Plot before aggregating, so the plot shows all the original categories
-        PD_data_prep.plot_by_woe(df_WOE=col_WoE_IV, save_path=savepathWoE_plots, rotation_of_x_axis_labels=0)
-        logger.info(f"WoE, IV and WoE plot save for the variable: {col} (IV = {col_WoE_IV['IV'].iloc[0]:.4f})")
-        # Aggregate similar dummies. data_inputs is re-assigned so the next iteration starts from the adjusted df
-        data_inputs, reference_category = PD_data_prep.add_dummy_varibles_similar_WoE(
-            df_inputs=data_inputs, df_WOE=col_WoE_IV, original_col=col,
-            max_gap_ratio=merge_rules["max_gap_ratio"], max_span_ratio=merge_rules["max_span_ratio"],
+    for col, options in pd_params["columns_to_check_WoE_continous"].items():
+        # Options of this variable = defaults + the ones defined for this variable in Parameters.yaml
+        opts = {**continous_defaults, **(options or {})}
+        
+        # FINE CLASSING: splits the variable in n_bins intervals and stores them in '<col>_factor'
+        data_inputs = PD_data_prep.fine_classing(df_inputs=data_inputs, original_col=col, n_bins=opts["n_bins"], upper_cap=opts.get("upper_cap"))
+        factor_col = f"{col}_factor"
+        # WoE and IV of the fine classes
+        col_WoE_IV = PD_data_prep.WOE_AND_IV(df_inputs=data_inputs, input_col_name=factor_col, df_output=data_output, discrete=False)
+        # Plot before the coarse classing, so the plot shows all the fine classes
+        PD_data_prep.plot_by_woe(df_WOE=col_WoE_IV, save_path=savepathWoE_plots, rotation_of_x_axis_labels=90)
+        logger.info(f"WoE, IV and WoE plot save for the variable: {factor_col} (IV = {col_WoE_IV['IV'].iloc[0]:.4f})")
+        
+        # COARSE CLASSING ("none" = stop here and review the plot first)
+        if opts["coarse_method"] == "none":
+            logger.info(f"Coarse classing skipped for {col}: review the plot and define coarse_boundaries in Parameters.yaml")
+            continue
+        # Creates the final dummies. data_inputs is re-assigned so the next iteration starts from the adjusted df
+        data_inputs, reference_category = PD_data_prep.coarse_classing(
+            df_inputs=data_inputs, df_WOE=col_WoE_IV, original_col=col, df_output=data_output,
+            method=opts["coarse_method"], boundaries=opts.get("coarse_boundaries"),
+            max_span_ratio=opts["max_span_ratio"], min_prop_obs=opts["min_prop_obs"],
         )
         logger.info(f"Reference category for {col}: {reference_category}")
         reference_categories_dict_continous[col] = reference_category

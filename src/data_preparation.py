@@ -456,7 +456,7 @@ class DataPreprocessor:
         # so the ORIGINAL columns (e.g. 'grade') are kept for WoE/IV
         dummies = pd.get_dummies(
             self.data[categorical_columns], 
-            columns=categorical_columns, # This forces numeric columns (e.g. term_int) to be encoded too
+            columns=categorical_columns,  # NEW: forces numeric columns (e.g. term_int) to be encoded too
             prefix=categorical_columns, 
             prefix_sep=":", 
             dtype=int
@@ -552,6 +552,9 @@ class PDdataPreparation:
             # NEW: memory of the aggregation done by add_dummy_varibles_similar_WoE (one entry per original variable)
             self.dummy_groups: Dict[str, Dict[str, List[str]]] = {}  # {original_col: {new_dummy: [dummies that were summed]}}
             self.reference_categories: Dict[str, Optional[str]] = {}  # {original_col: reference dummy}
+            # NEW: memory of the fine/coarse classing done for the continuous variables (needed to repeat it identically on the test set)
+            self.fine_classes: Dict[str, Dict[str, Any]] = {}  # {original_col: {"upper_edges": {label: upper edge}, "integer": bool, "has_missing": bool}}
+            self.coarse_classes: Dict[str, Dict[str, Any]] = {}  # {original_col: {"boundaries": [...], "add_missing": bool, "labels": [...]}}
     
     def dependent_variable_definition(self, dependent_var: str, list_defaulted_values: List[str]):
         
@@ -787,6 +790,9 @@ class PDdataPreparation:
             transparent=False,  # Solid white background
             format="png",  # PNG lossless image format
         )
+        
+        # Close the plot memory context to avoid memory leaks during batch loops
+        plt.close(fig)
     
     @log_execution
     def add_dummy_varibles_similar_WoE(
@@ -909,20 +915,8 @@ class PDdataPreparation:
             return df_inputs, None
 
         # ---- 2. Build the groups of contiguous categories with similar WoE ----
-        gaps = np.diff(w)  # gaps[j-1] = w_j - w_(j-1)
-        max_gap = gaps.max() if len(gaps) else 0.0
-        total_range = w[-1] - w[0]
-
-        groups = [[categories[0]]]
-        group_start_woe = w[0]
-        for j in range(1, len(categories)):
-            rule_1 = gaps[j - 1] <= max_gap_ratio * max_gap
-            rule_2 = (w[j] - group_start_woe) <= max_span_ratio * total_range
-            if rule_1 and rule_2:
-                groups[-1].append(categories[j]) # similar to the previous one -> same group
-            else:
-                groups.append([categories[j]]) # not similar -> new group
-                group_start_woe = w[j]
+        # NEW: the RULE 1 / RULE 2 logic now lives in _group_similar_woe (shared with coarse_classing), the result is the same as before
+        groups = [[categories[i] for i in g] for g in self._group_similar_woe(w, max_gap_ratio, max_span_ratio)]
 
         # Guarantee at least two dummies (only reachable if all the WoE are identical)
         if len(groups) < 2:
@@ -949,4 +943,239 @@ class PDdataPreparation:
         logger.info("'%s': %d categories -> %d dummies. Aggregated: %s. Reference category: %s",
                     original_col, len(categories), len(groups), merged if merged else "none", reference_category)
 
+        return df_inputs, reference_category
+
+    # =====================================================================================================
+    # FINE AND COARSE CLASSING FOR CONTINUOUS VARIABLES
+    # Flow per variable:  fine_classing -> WOE_AND_IV(discrete=False) on '<col>_factor' -> plot_by_woe -> coarse_classing
+    # =====================================================================================================
+
+    # Shared grouping rule: used by add_dummy_varibles_similar_WoE (discrete) and by coarse_classing (continuous)
+    @staticmethod
+    def _group_similar_woe(w, max_gap_ratio: Optional[float], max_span_ratio: float) -> List[List[int]]:
+        """
+        Groups CONTIGUOUS positions of the array w (WoE values, in the order given) following:
+        RULE 1: |w_j - w_(j-1)| <= max_gap_ratio * (biggest consecutive gap) --> (skipped if max_gap_ratio is None)
+        RULE 2: (max - min WoE of the group including j) <= max_span_ratio * (max - min WoE of all categories)
+        For WoE sorted ascending (discrete case) this is exactly the rule described in add_dummy_varibles_similar_WoE.
+        Returns a list with the positions of every group.
+        """
+        
+        # Determine the max gap and the total range
+        w = np.asarray(w, dtype=float)
+        gaps = np.abs(np.diff(w))
+        max_gap = gaps.max() if len(gaps) else 0.0
+        total_range = w.max() - w.min()
+
+        # Create the groupings ==> This is basically packing categories of a varible by out set of rules (1,2) so that they can be combined into one WoE-significant category
+        groups = [[0]]
+        group_min = group_max = w[0]
+        for j in range(1, len(w)):
+            rule_1 = True if max_gap_ratio is None else gaps[j - 1] <= max_gap_ratio * max_gap
+            rule_2 = (max(group_max, w[j]) - min(group_min, w[j])) <= max_span_ratio * total_range
+            if rule_1 and rule_2:
+                groups[-1].append(j)
+                group_min, group_max = min(group_min, w[j]), max(group_max, w[j])
+            else:
+                groups.append([j])
+                group_min = group_max = w[j]
+        return groups
+
+    # Continuous only: groups with too few observations have an unreliable WoE, so they are merged with a neighbour
+    @staticmethod
+    def _merge_small_groups(groups, prop_obs, prop_nd, prop_d, min_prop_obs: float) -> List[List[int]]:
+        """
+        A group with less than min_prop_obs of ALL the observations is merged with its neighbour that has the closest
+        WoE (the group WoE is recalculated from prop_n_nondefaulted / prop_n_defaulted). It stops when only 2 groups are left.
+        """
+        
+        # Get the proprotion of non-defaults vs defaults
+        def group_woe(g):
+            nd, d = prop_nd[g].sum(), prop_d[g].sum()
+            return np.log(nd / d) if nd > 0 and d > 0 else np.nan
+
+        # Get the groups gathered by the _group_similar_woe
+        groups = [list(g) for g in groups]
+        while len(groups) > 2:
+            # Get the share of observations
+            shares = [prop_obs[g].sum() for g in groups]
+            i = int(np.argmin(shares))
+            # If the shares are large enoughm break the function
+            if shares[i] >= min_prop_obs:
+                break
+            # Otherwise apply the proportion of non-defaults to defaults
+            woes = [group_woe(g) for g in groups]
+
+            # Get the distance between WoE
+            def distance(k):
+                return abs(woes[k] - woes[i]) if np.isfinite(woes[k]) and np.isfinite(woes[i]) else np.inf
+
+            # Group a group with few observations into its neighboring group
+            k = min((k for k in (i - 1, i + 1) if 0 <= k < len(groups)), key=lambda k: (distance(k), -shares[k]))
+            lo, hi = sorted((i, k))
+            groups[lo] = groups[lo] + groups[hi]
+            # Delete the original groups that compund the new group
+            del groups[hi]
+        return groups
+
+    # Readable and unambiguous names: intervals are (a, b], i.e. 'a-b' means "greater than a and up to b"
+    @staticmethod
+    def _coarse_labels(boundaries: List[float], integer: bool) -> List[str]:
+        f = lambda v: f"{v:.10g}"
+        if integer and all(float(b).is_integer() for b in boundaries):
+            # integer variable: '38-39' means the values 38 and 39 (as in the original notebook)
+            middle = [f(lo + 1) if hi - lo == 1 else f"{f(lo + 1)}-{f(hi)}" for lo, hi in zip(boundaries[:-1], boundaries[1:])]
+        else:
+            middle = [f"{f(lo)}-{f(hi)}" for lo, hi in zip(boundaries[:-1], boundaries[1:])]
+        return [f"<={f(boundaries[0])}"] + middle + [f">{f(boundaries[-1])}"]
+
+    # FINE CLASSING: splits a continuous variable in n_bins intervals of the same width and stores them in '<col>_factor'
+    @log_execution
+    def fine_classing(
+        self,
+        df_inputs: pd.DataFrame,
+        original_col: str,
+        n_bins: int = 50,
+        upper_cap: Optional[float] = None,
+    ) -> pd.DataFrame:
+        """
+        Adds the column '<original_col>_factor' (ordered categories, one per non-empty interval, in the order of the variable)
+        so WOE_AND_IV(discrete=False) and plot_by_woe can be used on it. The df_inputs received is NOT modified.
+        
+        - n_bins: number of intervals of the same width (like pd.cut(x, n_bins))
+        - upper_cap: for variables where one interval holds almost all the data (annual_inc, dti): the n_bins intervals are
+          built up to this value and everything above it goes into ONE last interval
+        - Missing values (NaN) get their own category 'Missing' (placed at the end), they are never mixed with the intervals
+        """
+        
+        # Original column
+        values = df_inputs[original_col]
+        # Drop NAs
+        non_null = values.dropna()
+        # Min and max values
+        lo, hi = non_null.min(), non_null.max()
+        if lo == hi:
+            raise ValueError(f"'{original_col}' is constant ({lo}), it can not be classed.")
+        if upper_cap is not None and upper_cap <= lo:
+            raise ValueError(f"upper_cap ({upper_cap}) must be bigger than the minimum of '{original_col}' ({lo}).")
+        # If the upper_cap is strictly lower than the maximum value of the variable
+        if upper_cap is not None and upper_cap < hi:
+            edges = np.append(np.linspace(lo, upper_cap, n_bins + 1), hi)
+        # If the upper_cap is equal to the maximum value of the variable
+        else:
+            edges = np.linspace(lo, hi, n_bins + 1)
+
+        # Include_lowest so the minimum belongs to the first interval; empty intervals are removed
+        cut = pd.cut(values, bins=edges, include_lowest=True).cat.remove_unused_categories()
+        intervals = list(cut.cat.categories)
+        labels = [f"({iv.left:.8g}, {iv.right:.8g}]" for iv in intervals]
+        # Create the factors
+        factor = pd.Series(pd.Categorical.from_codes(cut.cat.codes, categories=labels, ordered=True), index=df_inputs.index)
+
+        # Check for still any NAs
+        has_missing = bool(values.isna().any())
+        if has_missing:
+            factor = factor.cat.add_categories("Missing").fillna("Missing")
+
+        # Memory for coarse_classing
+        self.fine_classes[original_col] = {
+            "upper_edges": dict(zip(labels, [iv.right for iv in intervals])),
+            "integer": bool((non_null % 1 == 0).all()),
+            "has_missing": has_missing,
+        }
+        logger.info("'%s': %d non-empty intervals%s%s", original_col, len(labels),
+                    f" (upper cap {upper_cap})" if upper_cap is not None else "", ", plus 'Missing'" if has_missing else "")
+        return df_inputs.assign(**{f"{original_col}_factor": factor})
+
+    # COARSE CLASSING: creates the final dummies of a continuous variable, either proposed automatically or from given boundaries
+    @log_execution
+    def coarse_classing(
+        self,
+        df_inputs: pd.DataFrame,
+        df_WOE: Optional[pd.DataFrame],
+        original_col: str,
+        df_output: Optional[pd.Series] = None,
+        method: Literal["auto", "manual"] = "auto",
+        boundaries: Optional[List[float]] = None,
+        max_span_ratio: float = 0.15,
+        min_prop_obs: float = 0.05,
+        add_missing: Optional[bool] = None,
+    ) -> Tuple[pd.DataFrame, Optional[str]]:
+        """
+        Creates the dummies '<original_col>:<interval>' from the ORIGINAL variable, so every row belongs to exactly one of them
+        (checked). The original variable is kept and the '<original_col>_factor' column is removed. Returns
+        (df_inputs with the new dummies, reference category = the dummy with the lowest WoE, or None if df_output is not given).
+        
+        method="auto":   df_WOE is the WOE_AND_IV result of '<original_col>_factor'. Consecutive fine intervals are grouped with
+                         RULE 2 (group span <= max_span_ratio * total WoE range) and then every group with less than
+                         min_prop_obs of the observations is merged with the neighbour with the closest WoE.
+                         RULE 1 (gap vs biggest gap) is NOT used here: on a smooth trend all the steps are similar to the
+                         biggest one, so it would prevent any grouping (34 groups out of 50 in a test).
+        method="manual": the boundaries are given (upper limit of every interval but the last one, intervals are (a, b]),
+                         df_WOE is not needed. This is also how the SAME classing is repeated on the test set
+                         (boundaries = self.coarse_classes[col]["boundaries"], add_missing = self.coarse_classes[col]["add_missing"]).
+        """
+        
+        # In case another method is chosen
+        if method not in ("auto", "manual"):
+            raise ValueError("method must be 'auto' or 'manual'")
+        
+        # Retrieve the factor columns got from fine classing and and the original columns
+        factor_col = f"{original_col}_factor"
+        x = df_inputs[original_col]
+        integer = bool((x.dropna() % 1 == 0).all())
+
+        # ---- 1. Boundaries ----
+        if method == "auto":
+            if df_WOE is None or df_WOE.columns[0] != factor_col or original_col not in self.fine_classes:
+                raise ValueError(f"method='auto' needs fine_classing('{original_col}') and the WOE_AND_IV result of '{factor_col}'.")
+            woe = df_WOE.reset_index(drop=True)
+            numeric = woe[woe[factor_col].astype(str) != "Missing"].reset_index(drop=True) # 'Missing' is never grouped with intervals
+            w = numeric["WoE"].where(np.isfinite(numeric["WoE"])).ffill().bfill().to_numpy() # a non finite WoE joins its neighbour
+            if np.isnan(w).all():
+                logger.warning("'%s': no interval with a finite WoE, coarse classing skipped", original_col)
+                return df_inputs, None
+            groups = self._group_similar_woe(w, None, max_span_ratio)
+            groups = self._merge_small_groups(groups, numeric["prop_n_obs"].to_numpy(), numeric["prop_n_nondefaulted"].to_numpy(),
+                                              numeric["prop_n_defaulted"].to_numpy(), min_prop_obs)
+            upper_edges = self.fine_classes[original_col]["upper_edges"]
+            proposed = [upper_edges[str(numeric[factor_col].iloc[g[-1]])] for g in groups[:-1]]
+            # integer variables: the floor gives exactly the same split; others: 4 significant digits to get readable names
+            boundaries = [np.floor(b) if integer else float(f"{b:.4g}") for b in proposed]
+        elif not boundaries:
+            raise ValueError("method='manual' needs the list of boundaries.")
+        boundaries = sorted(set(float(b) for b in boundaries))
+        if not boundaries:
+            logger.warning("'%s': only one interval, nothing to class", original_col)
+            return df_inputs, None
+
+        # ---- 2. Dummies (intervals are (a, b], the first one starts at -inf and the last one ends at +inf) ----
+        labels = self._coarse_labels(boundaries, integer)
+        coarse = pd.cut(x, bins=[-np.inf] + boundaries + [np.inf], labels=labels)
+        has_missing = bool(x.isna().any()) if add_missing is None else add_missing
+        if has_missing:
+            coarse = coarse.cat.add_categories("Missing").fillna("Missing")
+        dummies = pd.get_dummies(coarse, prefix=original_col, prefix_sep=":", dtype=int)
+
+        # Every row must be in exactly ONE category, otherwise it would silently fall into the reference category
+        not_covered = int((dummies.sum(axis=1) != 1).sum())
+        if not_covered:
+            raise ValueError(f"'{original_col}': {not_covered} rows belong to no category (missing values without a 'Missing' category?).")
+        df_inputs = pd.concat([df_inputs.drop(columns=[factor_col], errors="ignore"), dummies], axis=1)
+
+        # ---- 3. Reference category (lowest WoE of the final categories) ----
+        reference_category = self.reference_categories.get(original_col)
+        if df_output is not None:
+            woe_after = self.WOE_AND_IV(df_inputs=pd.DataFrame({original_col: coarse}, index=x.index),
+                                        input_col_name=original_col, df_output=df_output, discrete=False)
+            finite = woe_after[np.isfinite(woe_after["WoE"])]
+            reference_category = f"{original_col}:{finite.loc[finite['WoE'].idxmin(), original_col]}" if len(finite) else None
+            logger.info("'%s': IV before coarse classing: %s | after: %.4f", original_col,
+                        f"{df_WOE['IV'].iloc[0]:.4f}" if df_WOE is not None else "n/a", woe_after["IV"].iloc[0])
+
+        # ---- 4. Memory ----
+        self.coarse_classes[original_col] = {"boundaries": boundaries, "add_missing": has_missing, "labels": labels}
+        self.reference_categories[original_col] = reference_category
+        logger.info("'%s': %d categories %s. Reference category: %s", original_col, dummies.shape[1],
+                    list(dummies.columns.str.replace(f"{original_col}:", "", regex=False)), reference_category)
         return df_inputs, reference_category
